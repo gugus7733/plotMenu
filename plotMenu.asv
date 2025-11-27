@@ -505,32 +505,32 @@ refreshWorkspaceControls();
     end
 
     function onLineNameChanged(~, ~)
-        idx = getSelectedLineIndex();
-        if idx == 0
-            return;
-        end
-        hLine = state.lines(idx).handle;
-        if ~isvalid(hLine)
-            return;
-        end
-        
-        newName = edtLineName.Value;
-        if isempty(newName)
-            newName = state.lines(idx).yName;
-        end
-        hLine.DisplayName = newName;
-        
-        items = lbLines.Items;
-        if ischar(items)
-            items = {items};
-        end
-        if idx <= numel(items)
-            items{idx} = newName;
-        end
-        lbLines.Items = items;
-        lbLines.Value = newName;
-        
-        updateLegend();
+    idx = getSelectedLineIndex();
+    if idx == 0
+        return;
+    end
+    hLine = state.lines(idx).handle;
+    if ~isvalid(hLine)
+        return;
+    end
+    
+    newName = edtLineName.Value;
+    if isempty(newName)
+        newName = state.lines(idx).yName;
+    end
+    hLine.DisplayName = newName;
+    
+    items = lbLines.Items;
+    if ischar(items)
+        items = {items};
+    end
+    if idx <= numel(items)
+        items{idx} = newName;
+    end
+    lbLines.Items = items;
+    lbLines.Value = newName;
+    
+    updateLegend();
     end
 
 function onPickColor(~, ~)
@@ -725,4 +725,4 @@ catch
     % In case of failure, remain silent to avoid intrusive dialogs
 end
 end
-end
+
