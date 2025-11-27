@@ -151,8 +151,8 @@ linePanel = uipanel(rightLayout, 'Title', 'Line properties', 'BackgroundColor', 
 linePanel.Layout.Row    = 1;
 linePanel.Layout.Column = 1;
 
-lineLayout = uigridlayout(linePanel, [8 2]);
-lineLayout.RowHeight   = {20, 40, 20, 30, 20, 30, 20, '1x'};
+lineLayout = uigridlayout(linePanel, [10 2]);
+lineLayout.RowHeight   = {20, 40, 20, 30, 30, 30, 20, 30, 30, '1x'};
 lineLayout.ColumnWidth = {80, '1x'};
 
 lblLines = uilabel(lineLayout, 'Text', 'Lines:');
@@ -190,31 +190,48 @@ lblWidth = uilabel(lineLayout, 'Text', 'Line width:');
 lblWidth.Layout.Row    = 5;
 lblWidth.Layout.Column = 1;
 
-spLineWidth = uispinner(lineLayout, ...
+sldLineWidth = uislider(lineLayout, ...
     'Limits', [0.1 10], ...
-    'Step',  0.1, ...
+    'MajorTicks', 0.1:0.9:10, ...
     'Value', 1.5, ...
-    'ValueChangedFcn', @onWidthChanged);
-spLineWidth.Layout.Row    = 5;
-spLineWidth.Layout.Column = 2;
+    'ValueChangedFcn', @onWidthSliderChanged);
+sldLineWidth.Layout.Row    = 5;
+sldLineWidth.Layout.Column = 2;
+
+lblWidthValue = uilabel(lineLayout, 'Text', 'Width value:');
+lblWidthValue.Layout.Row    = 6;
+lblWidthValue.Layout.Column = 1;
+
+edtLineWidth = uieditfield(lineLayout, 'numeric', ...
+    'Limits', [0.1 10], ...
+    'Value', 1.5, ...
+    'ValueChangedFcn', @onWidthEditChanged);
+edtLineWidth.Layout.Row    = 6;
+edtLineWidth.Layout.Column = 2;
 
 lblStyle = uilabel(lineLayout, 'Text', 'Line style:');
-lblStyle.Layout.Row    = 6;
+lblStyle.Layout.Row    = 7;
 lblStyle.Layout.Column = 1;
 
 ddLineStyle = uidropdown(lineLayout, ...
     'Items', {'-', '--', ':', '-.'}, ...
     'Value', '-', ...
     'ValueChangedFcn', @onStyleChanged);
-ddLineStyle.Layout.Row    = 6;
+ddLineStyle.Layout.Row    = 7;
 ddLineStyle.Layout.Column = 2;
 
 chkLineLegend = uicheckbox(lineLayout, ...
     'Text', 'Show in legend', ...
     'Value', true, ...
     'ValueChangedFcn', @onLineLegendToggled);
-chkLineLegend.Layout.Row    = 7;
+chkLineLegend.Layout.Row    = 8;
 chkLineLegend.Layout.Column = [1 2];
+
+btnRemoveLine = uibutton(lineLayout, ...
+    'Text', 'Remove selected line', ...
+    'ButtonPushedFcn', @onRemoveLine);
+btnRemoveLine.Layout.Row    = 9;
+btnRemoveLine.Layout.Column = [1 2];
 
 % --- Axes properties panel ---
 axesPanel = uipanel(rightLayout, 'Title', 'Axes properties', 'BackgroundColor', [1 1 1]);
@@ -402,18 +419,33 @@ refreshWorkspaceControls();
         state.subplots(state.activeSubplot).lines = lines;
     end
 
-    function refreshLineListFromSubplot()
+    function refreshLineListFromSubplot(selectedHandle)
+        if nargin < 1
+            selectedHandle = [];
+        end
+
         lines = getCurrentLines();
         items = {};
+        data  = {};
         for k = 1:numel(lines)
             if isvalid(lines(k).handle)
                 items{end+1} = lines(k).handle.DisplayName; %#ok<AGROW>
+                data{end+1}  = lines(k).handle; %#ok<AGROW>
             end
         end
 
-        lbLines.Items = items;
+        previousValue = lbLines.Value;
+        lbLines.Items     = items;
+        lbLines.ItemsData = data;
+
         if ~isempty(items)
-            lbLines.Value = items{1};
+            if ~isempty(selectedHandle) && any(cellfun(@(h) isequal(h, selectedHandle), data))
+                lbLines.Value = selectedHandle;
+            elseif ~isempty(previousValue) && any(cellfun(@(h) isequal(h, previousValue), data))
+                lbLines.Value = previousValue;
+            else
+                lbLines.Value = data{1};
+            end
         else
             lbLines.Value = {};
         end
@@ -475,6 +507,7 @@ refreshWorkspaceControls();
         if idx == state.activeSubplot
             lbLines.Items = {};
             lbLines.Value = {};
+            lbLines.ItemsData = {};
             syncStyleWithSelectedLine();
             updateLegend(subplotInfo.axes);
         end
@@ -588,17 +621,8 @@ refreshWorkspaceControls();
 
         hold(targetAx, 'on');
 
-        anyPlotted   = false;
-        newLineItems = {};
-
-        % Existing line names when superposing
-        existingItems = {};
-        if superpose && ~isempty(lbLines.Items)
-            existingItems = lbLines.Items;
-            if ischar(existingItems)
-                existingItems = {existingItems};
-            end
-        end
+        anyPlotted     = false;
+        newLineHandles = {};
 
         for k = 1:numel(ySelection)
             yName = ySelection{k};
@@ -642,8 +666,8 @@ refreshWorkspaceControls();
 
             subplotInfo.lines(end+1) = lineInfo; %#ok<AGROW>
 
-            anyPlotted      = true;
-            newLineItems{end+1} = yName; %#ok<AGROW>
+            anyPlotted        = true;
+            newLineHandles{end+1} = hLine; %#ok<AGROW>
         end
 
         hold(targetAx, 'off');
@@ -656,27 +680,18 @@ refreshWorkspaceControls();
             if ~superpose || isempty(subplotInfo.lines)
                 lbLines.Items = {};
                 lbLines.Value = {};
+                lbLines.ItemsData = {};
                 updateLegend(targetAx);
             end
             return;
         end
 
-        % Combine existing and new line names
-        allItems = newLineItems;
-        if ~isempty(existingItems)
-            allItems = [existingItems, newLineItems];
+        selectedHandle = [];
+        if ~isempty(newLineHandles)
+            selectedHandle = newLineHandles{1};
         end
 
-        lbLines.Items = allItems;
-        if ~isempty(newLineItems)
-            lbLines.Value = newLineItems{1};
-        elseif ~isempty(allItems)
-            lbLines.Value = allItems{1};
-        else
-            lbLines.Value = {};
-        end
-
-        syncStyleWithSelectedLine();
+        refreshLineListFromSubplot(selectedHandle);
         updateLegend(targetAx);
     end
 
@@ -684,17 +699,31 @@ refreshWorkspaceControls();
         % Return index of selected line in the active subplot, or 0 if none
         idx = 0;
         lines = getCurrentLines();
-        if isempty(lines) || isempty(lbLines.Items) || isempty(lbLines.Value)
+        if isempty(lines) || isempty(lbLines.ItemsData) || isempty(lbLines.Value)
             return;
         end
-        selValue = lbLines.Value;
-        allItems = lbLines.Items;
-        if ischar(allItems)
-            allItems = {allItems};
-        end
-        idx = find(strcmp(selValue, allItems), 1, 'first');
+
+        selHandle = lbLines.Value;
+        idx = find(arrayfun(@(ln) isequal(ln.handle, selHandle), lines), 1, 'first');
         if isempty(idx) || idx > numel(lines)
             idx = 0;
+        end
+    end
+
+    function selectLineHandle(hLine)
+        if isempty(hLine) || ~isvalid(hLine)
+            return;
+        end
+
+        data = lbLines.ItemsData;
+        if isempty(data)
+            refreshLineListFromSubplot(hLine);
+            data = lbLines.ItemsData;
+        end
+
+        if any(cellfun(@(h) isequal(h, hLine), data))
+            lbLines.Value = hLine;
+            syncStyleWithSelectedLine();
         end
     end
 
@@ -707,7 +736,8 @@ refreshWorkspaceControls();
         if idx == 0
             edtLineName.Value        = '';
             btnColor.BackgroundColor = [0 0.4470 0.7410];
-            spLineWidth.Value        = 1.5;
+            sldLineWidth.Value       = 1.5;
+            edtLineWidth.Value       = 1.5;
             ddLineStyle.Value        = '-';
             chkLineLegend.Value      = true;
             return;
@@ -729,7 +759,8 @@ refreshWorkspaceControls();
         end
 
         % Width
-        spLineWidth.Value = hLine.LineWidth;
+        sldLineWidth.Value = hLine.LineWidth;
+        edtLineWidth.Value = hLine.LineWidth;
 
         % Style
         ddLineStyle.Value = hLine.LineStyle;
@@ -763,7 +794,9 @@ refreshWorkspaceControls();
             items{idx} = newName;
         end
         lbLines.Items = items;
-        lbLines.Value = newName;
+        if numel(lbLines.ItemsData) >= idx
+            lbLines.Value = lbLines.ItemsData{idx};
+        end
 
         setCurrentLines(lines);
         updateLegend();
@@ -787,6 +820,37 @@ refreshWorkspaceControls();
         setCurrentLines(lines);
 
         updateLegend();
+    end
+
+    function onRemoveLine(~, ~)
+        subplotIdx = state.activeSubplot;
+        if isempty(state.subplots) || subplotIdx < 1 || subplotIdx > numel(state.subplots)
+            return;
+        end
+
+        lines = getCurrentLines();
+        idx = getSelectedLineIndex();
+        if idx == 0 || isempty(lines)
+            return;
+        end
+
+        hLine = lines(idx).handle;
+        if isvalid(hLine)
+            delete(hLine);
+        end
+
+        lines(idx) = [];
+        state.subplots(subplotIdx).lines = lines;
+
+        nextHandle = [];
+        if idx > 1 && idx-1 <= numel(lines)
+            nextHandle = lines(idx-1).handle;
+        elseif idx <= numel(lines)
+            nextHandle = lines(idx).handle;
+        end
+
+        refreshLineListFromSubplot(nextHandle);
+        updateLegend(state.subplots(subplotIdx).axes);
     end
 
     function out = ternary(cond, a, b)
@@ -840,17 +904,30 @@ refreshWorkspaceControls();
 % function onRGBChanged(~, ~)
 % end
 
-    function onWidthChanged(~, ~)
+    function onWidthSliderChanged(~, ~)
+        applyLineWidth(sldLineWidth.Value);
+    end
+
+    function onWidthEditChanged(~, ~)
+        applyLineWidth(edtLineWidth.Value);
+    end
+
+    function applyLineWidth(widthValue)
+        widthValue = max(min(widthValue, sldLineWidth.Limits(2)), sldLineWidth.Limits(1));
+        sldLineWidth.Value = widthValue;
+        edtLineWidth.Value = widthValue;
+
         idx = getSelectedLineIndex();
         if idx == 0
             return;
         end
+
         lines = getCurrentLines();
         hLine = lines(idx).handle;
         if ~isvalid(hLine)
             return;
         end
-        hLine.LineWidth = spLineWidth.Value;
+        hLine.LineWidth = widthValue;
     end
 
     function onStyleChanged(~, ~)
@@ -946,7 +1023,7 @@ refreshWorkspaceControls();
         end
     end
 
-    function onPlotElementClicked(graphObj, ~)
+    function onPlotElementClicked(graphObj, evt)
         if isempty(graphObj) || ~isvalid(graphObj)
             return;
         end
@@ -959,6 +1036,32 @@ refreshWorkspaceControls();
         idx = findSubplotIndex(axHandle);
         if idx ~= 0
             setActiveSubplot(idx);
+        end
+
+        if isa(graphObj, 'matlab.graphics.chart.primitive.Line')
+            selectLineHandle(graphObj);
+            applyDatatip(graphObj, evt);
+        end
+    end
+
+    function applyDatatip(hLine, evt)
+        if isempty(hLine) || ~isvalid(hLine)
+            return;
+        end
+
+        tipPos = [];
+        try
+            tipPos = evt.IntersectionPoint;
+        catch
+        end
+
+        try
+            if ~isempty(tipPos) && numel(tipPos) >= 2
+                datatip(hLine, tipPos(1), tipPos(2));
+            else
+                datatip(hLine);
+            end
+        catch
         end
     end
 
