@@ -46,10 +46,17 @@ subplotLayout = uigridlayout(subplotPanel, [5 1]);
 subplotLayout.RowHeight   = {'fit', '1x', 'fit', 'fit', 'fit'};
 subplotLayout.BackgroundColor = [1 1 1];
 
-lblLayoutHint = uilabel(subplotLayout, ...
-    'Text', 'Click to choose layout (rows x cols):');
-lblLayoutHint.Layout.Row    = 1;
-lblLayoutHint.Layout.Column = 1;
+defaultLayoutRowHeights = {'fit', '1x', 'fit', 'fit', 'fit'};
+hiddenLayoutRowHeights  = defaultLayoutRowHeights;
+hiddenLayoutRowHeights{2} = 0;
+
+subplotLayout.RowHeight = hiddenLayoutRowHeights;
+
+btnLayoutMenu = uibutton(subplotLayout, ...
+    'Text', 'Choose layout', ...
+    'ButtonPushedFcn', @onLayoutMenuPressed);
+btnLayoutMenu.Layout.Row    = 1;
+btnLayoutMenu.Layout.Column = 1;
 
 tblLayout = uitable(subplotLayout, ...
     'Data', strings(5), ...
@@ -60,6 +67,8 @@ tblLayout = uitable(subplotLayout, ...
     'ColumnWidth', num2cell(repmat(26, 1, 5)));
 tblLayout.Layout.Row    = 2;
 tblLayout.Layout.Column = 1;
+tblLayout.Visible       = 'off';
+tblLayout.Enable        = 'off';
 
 lblActiveSubplot = uilabel(subplotLayout, ...
     'Text', 'Active subplot: (1,1)');
@@ -330,6 +339,9 @@ refreshWorkspaceControls();
                 newSubplots(idx).legendLocation = ddLegendLocation.Value;
             end
 
+            wireAxesInteractivity(axLocal);
+            ensureLineInteractivity(newSubplots(idx).lines);
+
             % Ensure line structs carry legend flag
             for ln = 1:numel(newSubplots(idx).lines)
                 if ~isfield(newSubplots(idx).lines(ln), 'legend')
@@ -359,6 +371,9 @@ refreshWorkspaceControls();
 
         state.activeSubplot = idx;
         ax = state.subplots(idx).axes;
+
+        wireAxesInteractivity(ax);
+        ensureLineInteractivity(state.subplots(idx).lines);
 
         rowIdx = ceil(idx / state.subplotCols);
         colIdx = mod(idx-1, state.subplotCols) + 1;
@@ -406,6 +421,10 @@ refreshWorkspaceControls();
         syncStyleWithSelectedLine();
     end
 
+    function onLayoutMenuPressed(~, ~)
+        setLayoutMenuVisibility(true);
+    end
+
     function onLayoutCellSelected(~, event)
         if isempty(event.Indices)
             return;
@@ -418,6 +437,22 @@ refreshWorkspaceControls();
 
         newIdx = sub2ind([state.subplotRows, state.subplotCols], rows, cols);
         setActiveSubplot(newIdx);
+
+        setLayoutMenuVisibility(false);
+    end
+
+    function setLayoutMenuVisibility(showTable)
+        if showTable
+            tblLayout.Visible = 'on';
+            tblLayout.Enable  = 'on';
+            rowHeights = defaultLayoutRowHeights;
+        else
+            tblLayout.Visible = 'off';
+            tblLayout.Enable  = 'off';
+            rowHeights = hiddenLayoutRowHeights;
+        end
+
+        subplotLayout.RowHeight = rowHeights;
     end
 
     function onSubplotSuperposeChanged(~, ~)
@@ -594,6 +629,8 @@ refreshWorkspaceControls();
                 'LineWidth',   1.5, ...
                 'LineStyle',   '-', ...
                 'DisplayName', yName);
+
+            wireLineInteractivity(hLine);
 
             lineInfo         = struct();
             lineInfo.handle  = hLine;
@@ -799,9 +836,9 @@ refreshWorkspaceControls();
         end
     end
 
-    % onRGBChanged no longer used (kept for compatibility if needed)
-    % function onRGBChanged(~, ~)
-    % end
+% onRGBChanged no longer used (kept for compatibility if needed)
+% function onRGBChanged(~, ~)
+% end
 
     function onWidthChanged(~, ~)
         idx = getSelectedLineIndex();
@@ -832,21 +869,40 @@ refreshWorkspaceControls();
     end
 
     function onAxesTextChanged(~, ~)
-        title(ax,  edtTitle.Value);
-        xlabel(ax, edtXLabel.Value);
-        ylabel(ax, edtYLabel.Value);
+        if isempty(state.subplots) || state.activeSubplot < 1 || ...
+                state.activeSubplot > numel(state.subplots)
+            return;
+        end
+
+        targetAx = state.subplots(state.activeSubplot).axes;
+        if isempty(targetAx) || ~isvalid(targetAx)
+            return;
+        end
+
+        title(targetAx,  edtTitle.Value);
+        xlabel(targetAx, edtXLabel.Value);
+        ylabel(targetAx, edtYLabel.Value);
     end
 
     function onLegendChanged(~, ~)
         idx = state.activeSubplot;
         state.subplots(idx).legendVisible  = chkLegend.Value;
         state.subplots(idx).legendLocation = ddLegendLocation.Value;
-        updateLegend(ax);
+        updateLegend(state.subplots(idx).axes);
     end
 
     function updateLegend(axHandle)
-        if nargin < 1
-            axHandle = ax;
+        if nargin < 1 || isempty(axHandle)
+            if isempty(state.subplots) || state.activeSubplot < 1 || ...
+                    state.activeSubplot > numel(state.subplots)
+                return;
+            end
+
+            axHandle = state.subplots(state.activeSubplot).axes;
+        end
+
+        if isempty(axHandle) || ~isvalid(axHandle)
+            return;
         end
 
         subplotIdx = findSubplotIndex(axHandle);
@@ -879,6 +935,61 @@ refreshWorkspaceControls();
         end
     end
 
+    function onAxesClicked(axHandle, ~)
+        if isempty(axHandle) || ~isvalid(axHandle)
+            return;
+        end
+
+        idx = findSubplotIndex(axHandle);
+        if idx ~= 0
+            setActiveSubplot(idx);
+        end
+    end
+
+    function onPlotElementClicked(graphObj, ~)
+        if isempty(graphObj) || ~isvalid(graphObj)
+            return;
+        end
+
+        axHandle = ancestor(graphObj, 'axes');
+        if isempty(axHandle) || ~isvalid(axHandle)
+            return;
+        end
+
+        idx = findSubplotIndex(axHandle);
+        if idx ~= 0
+            setActiveSubplot(idx);
+        end
+    end
+
+    function wireAxesInteractivity(axHandle)
+        if isempty(axHandle) || ~isvalid(axHandle)
+            return;
+        end
+
+        axHandle.ButtonDownFcn = @(src, evt) onAxesClicked(src, evt);
+        if isprop(axHandle, 'PickableParts')
+            axHandle.PickableParts = 'all';
+        end
+    end
+
+    function wireLineInteractivity(hLine)
+        if isempty(hLine) || ~isvalid(hLine)
+            return;
+        end
+
+        hLine.ButtonDownFcn = @(src, evt) onPlotElementClicked(src, evt);
+        if isprop(hLine, 'PickableParts')
+            hLine.PickableParts = 'all';
+        end
+    end
+
+    function ensureLineInteractivity(lines)
+        for ln = 1:numel(lines)
+            wireLineInteractivity(lines(ln).handle);
+        end
+    end
+
     function idx = findSubplotIndex(axHandle)
         idx = 0;
         for n = 1:numel(state.subplots)
@@ -887,6 +998,43 @@ refreshWorkspaceControls();
                 return;
             end
         end
+    end
+
+    function lit = valueToLiteral(val)
+        if isa(val, 'datetime')
+            lit = sprintf('datetime(''%s'',''InputFormat'',''yyyy-MM-dd HH:mm:ss'')', ...
+                datestr(val, 'yyyy-mm-dd HH:MM:SS'));
+            return;
+        end
+
+        if isa(val, 'duration')
+            lit = sprintf('seconds(%g)', seconds(val));
+            return;
+        end
+
+        lit = mat2str(val);
+    end
+
+    function lit = arrayToLiteral(vals)
+        if isscalar(vals)
+            lit = valueToLiteral(vals);
+            return;
+        end
+
+        if isa(vals, 'datetime')
+            parts = arrayfun(@(d) sprintf('datetime(''%s'',''InputFormat'',''yyyy-MM-dd HH:mm:ss'')', ...
+                datestr(d, 'yyyy-mm-dd HH:MM:SS')), vals, 'UniformOutput', false);
+            lit = ['[', strjoin(parts, ' '), ']'];
+            return;
+        end
+
+        if isa(vals, 'duration')
+            parts = arrayfun(@(d) sprintf('seconds(%g)', seconds(d)), vals, 'UniformOutput', false);
+            lit = ['[', strjoin(parts, ' '), ']'];
+            return;
+        end
+
+        lit = mat2str(vals);
     end
 
     function syncLegendControlsFromSubplot(idx)
@@ -923,7 +1071,7 @@ refreshWorkspaceControls();
 
         codeLines = {};
         codeLines{end+1} = '% Auto-generated by plotMenuPrototype';
-        codeLines{end+1} = sprintf('hFig = figure(''Name'',''Generated plot'');');
+        codeLines{end+1} = sprintf('hFig = figure(''Name'',''Generated plot'', ''Color'', [1 1 1]);');
         codeLines{end+1} = sprintf('tiled = tiledlayout(hFig, %d, %d);', ...
             state.subplotRows, state.subplotCols);
         codeLines{end+1} = '';
@@ -936,12 +1084,17 @@ refreshWorkspaceControls();
 
             codeLines{end+1} = sprintf('ax = nexttile(tiled, %d); hold(ax,''on'');', s); %#ok<AGROW>
 
+            lineVarNames = cell(1, numel(subplotInfo.lines));
+
             for k = 1:numel(subplotInfo.lines)
                 info  = subplotInfo.lines(k);
                 hLine = info.handle;
                 if ~isvalid(hLine)
                     continue;
                 end
+
+                lineVar = sprintf('hLine_%d_%d', s, k);
+                lineVarNames{k} = lineVar;
 
                 lw  = hLine.LineWidth;
                 ls  = hLine.LineStyle;
@@ -950,7 +1103,8 @@ refreshWorkspaceControls();
                 dnEsc = strrep(dn, '''', '''''');
 
                 lineCode = sprintf( ...
-                    'plot(ax, %s, %s, ''LineWidth'', %.3g, ''LineStyle'', ''%s'', ''Color'', [%.3g %.3g %.3g], ''DisplayName'', ''%s'');', ...
+                    '%s = plot(ax, %s, %s, ''LineWidth'', %.3g, ''LineStyle'', ''%s'', ''Color'', [%.3g %.3g %.3g], ''DisplayName'', ''%s'');', ...
+                    lineVar, ...
                     info.xName, info.yName, ...
                     lw, ls, ...
                     col(1), col(2), col(3), dnEsc);
@@ -978,6 +1132,9 @@ refreshWorkspaceControls();
                 codeLines{end+1} = sprintf('ylabel(ax, ''%s'');', yStr);
             end
 
+            codeLines{end+1} = sprintf('xlim(ax, %s);', arrayToLiteral(axLocal.XLim));
+            codeLines{end+1} = sprintf('ylim(ax, %s);', arrayToLiteral(axLocal.YLim));
+
             legendable = arrayfun(@(ln) isvalid(ln.handle) && ...
                 strcmp(get(ln.handle.Annotation.LegendInformation, 'IconDisplayStyle'), 'on'), ...
                 subplotInfo.lines);
@@ -990,9 +1147,38 @@ refreshWorkspaceControls();
             end
 
             codeLines{end+1} = 'grid(ax,''on'');';
+
+            dtObjects = findall(axLocal, 'Type', 'DataTip');
+            for dtIdx = 1:numel(dtObjects)
+                dtObj = dtObjects(dtIdx);
+                if ~isvalid(dtObj)
+                    continue;
+                end
+
+                targetLine = [];
+                if isprop(dtObj, 'DataSource') && ~isempty(dtObj.DataSource)
+                    targetLine = dtObj.DataSource;
+                elseif isprop(dtObj, 'Target') && ~isempty(dtObj.Target)
+                    targetLine = dtObj.Target;
+                end
+
+                lineIdx = find(arrayfun(@(ln) isequal(ln.handle, targetLine), subplotInfo.lines), 1);
+                if isempty(lineIdx) || lineIdx > numel(lineVarNames) || isempty(lineVarNames{lineIdx})
+                    continue;
+                end
+
+                pos = dtObj.Position;
+                if numel(pos) < 2
+                    continue;
+                end
+
+                xTip = valueToLiteral(pos(1));
+                yTip = valueToLiteral(pos(2));
+                codeLines{end+1} = sprintf('datatip(%s, %s, %s);', lineVarNames{lineIdx}, xTip, yTip); %#ok<AGROW>
+            end
+
             codeLines{end+1} = '';
         end
-
         codeStr = strjoin(codeLines, newline);
 
         try
@@ -1025,3 +1211,4 @@ refreshWorkspaceControls();
         end
     end
 end
+
