@@ -15,70 +15,103 @@ function plotMenu
 % Shared state across nested callbacks
 state         = struct();
 statusTimer   = [];
-state.lines   = struct('handle',{},'xName',{},'yName',{});  % line info: handle, xName, yName
+state.subplots = struct('axes',{},'lines',{},'superpose',{},'legendVisible',{},'legendLocation',{});
+state.subplotRows = 1;
+state.subplotCols = 1;
+state.activeSubplot = 1;
 
 %% Create main UI
 fig = uifigure( ...
     'Name',     'Plot Menu Prototype', ...
-    'Position', [100 100 1400 800]);
+    'Position', [100 100 1400 800], ...
+    'Color',    [1 1 1]);
 
 mainLayout = uigridlayout(fig, [1 3]);
 mainLayout.ColumnWidth = {280, '1x', 320};
 
 %% Left panel: data selection
-leftPanel  = uipanel(mainLayout, 'Title', 'Data selection');
+leftPanel  = uipanel(mainLayout, 'Title', 'Data selection', 'BackgroundColor', [1 1 1]);
 leftPanel.Layout.Row    = 1;
 leftPanel.Layout.Column = 1;
 
-leftLayout = uigridlayout(leftPanel, [8 1]);
-leftLayout.RowHeight = {30, 20, 30, 20, '1x', 30, 20, 30};
+leftLayout = uigridlayout(leftPanel, [11 1]);
+leftLayout.RowHeight = {200, 30, 20, 30, 20, 30, 20, '1x', 30, 20, 30};
+
+subplotPanel = uipanel(leftLayout, 'Title', 'Subplots', 'BackgroundColor', [1 1 1]);
+subplotPanel.Layout.Row    = 1;
+subplotPanel.Layout.Column = 1;
+
+subplotLayout = uigridlayout(subplotPanel, [5 1]);
+subplotLayout.RowHeight   = {20, 120, 20, 30, 30};
+subplotLayout.BackgroundColor = [1 1 1];
+
+lblLayoutHint = uilabel(subplotLayout, ...
+    'Text', 'Click to choose layout (rows x cols):');
+lblLayoutHint.Layout.Row    = 1;
+lblLayoutHint.Layout.Column = 1;
+
+tblLayout = uitable(subplotLayout, ...
+    'Data', strings(5), ...
+    'RowName', {}, ...
+    'ColumnName', {}, ...
+    'Multiselect', 'off', ...
+    'CellSelectionCallback', @onLayoutCellSelected, ...
+    'ColumnWidth', num2cell(repmat(26, 1, 5)));
+tblLayout.Layout.Row    = 2;
+tblLayout.Layout.Column = 1;
+
+lblActiveSubplot = uilabel(subplotLayout, ...
+    'Text', 'Active subplot: (1,1)');
+lblActiveSubplot.Layout.Row    = 3;
+lblActiveSubplot.Layout.Column = 1;
+
+chkSubplotSuperpose = uicheckbox(subplotLayout, ...
+    'Text',  'Superpose in subplot', ...
+    'Value', false, ...
+    'ValueChangedFcn', @onSubplotSuperposeChanged);
+chkSubplotSuperpose.Layout.Row    = 4;
+chkSubplotSuperpose.Layout.Column = 1;
+
+btnClear = uibutton(subplotLayout, ...
+    'Text',          'Clear selected subplot', ...
+    'ButtonPushedFcn', @onClearPlot);
+btnClear.Layout.Row    = 5;
+btnClear.Layout.Column = 1;
 
 btnRefresh = uibutton(leftLayout, ...
     'Text',          'Refresh workspace variables', ...
     'ButtonPushedFcn', @onRefreshWorkspace);
-btnRefresh.Layout.Row    = 1;
+btnRefresh.Layout.Row    = 2;
 btnRefresh.Layout.Column = 1;
 
 lblXVar = uilabel(leftLayout, 'Text', 'X variable:');
-lblXVar.Layout.Row    = 2;
+lblXVar.Layout.Row    = 3;
 lblXVar.Layout.Column = 1;
 
 ddXVar = uidropdown(leftLayout, ...
     'Items', {''}, ...
     'Value', '');
-ddXVar.Layout.Row    = 3;
+ddXVar.Layout.Row    = 4;
 ddXVar.Layout.Column = 1;
 
 lblYVar = uilabel(leftLayout, 'Text', 'Y variable(s):');
-lblYVar.Layout.Row    = 4;
+lblYVar.Layout.Row    = 5;
 lblYVar.Layout.Column = 1;
 
 lbYVar = uilistbox(leftLayout, ...
     'Items',      {}, ...
     'Multiselect','on');
-lbYVar.Layout.Row    = 5;
+lbYVar.Layout.Row    = 6;
 lbYVar.Layout.Column = 1;
-
-btnClear = uibutton(leftLayout, ...
-    'Text',          'Clear plot', ...
-    'ButtonPushedFcn', @onClearPlot);
-btnClear.Layout.Row    = 6;
-btnClear.Layout.Column = 1;
-
-chkSuperpose = uicheckbox(leftLayout, ...
-    'Text',  'Superpose', ...
-    'Value', false);
-chkSuperpose.Layout.Row    = 7;
-chkSuperpose.Layout.Column = 1;
 
 btnPlot = uibutton(leftLayout, ...
     'Text',          'Plot selected', ...
     'ButtonPushedFcn', @onPlot);
-btnPlot.Layout.Row    = 8;
+btnPlot.Layout.Row    = 11;
 btnPlot.Layout.Column = 1;
 
 %% Center panel: axes
-centerPanel  = uipanel(mainLayout, 'Title', 'Plot');
+centerPanel  = uipanel(mainLayout, 'Title', 'Plot', 'BackgroundColor', [1 1 1]);
 centerPanel.Layout.Row    = 1;
 centerPanel.Layout.Column = 2;
 
@@ -86,16 +119,8 @@ centerLayout = uigridlayout(centerPanel, [1 1]);
 centerLayout.RowHeight   = {'1x'};
 centerLayout.ColumnWidth = {'1x'};
 
-ax = uiaxes(centerLayout);
-ax.Layout.Row    = 1;
-ax.Layout.Column = 1;
-grid(ax, 'on');
-title(ax, '');
-xlabel(ax, '');
-ylabel(ax, '');
-
 %% Right panel: line style, axes properties, export
-rightPanel  = uipanel(mainLayout, 'Title', 'Style / Export');
+rightPanel  = uipanel(mainLayout, 'Title', 'Style / Export', 'BackgroundColor', [1 1 1]);
 rightPanel.Layout.Row    = 1;
 rightPanel.Layout.Column = 3;
 
@@ -111,7 +136,7 @@ bottomLayout = uigridlayout(bottomPanel, [1 1]);
 bottomLayout.ColumnWidth = {'1x'};
 
 % --- Line style panel ---
-linePanel = uipanel(rightLayout, 'Title', 'Line properties');
+linePanel = uipanel(rightLayout, 'Title', 'Line properties', 'BackgroundColor', [1 1 1]);
 linePanel.Layout.Row    = 1;
 linePanel.Layout.Column = 1;
 
@@ -173,12 +198,15 @@ ddLineStyle = uidropdown(lineLayout, ...
 ddLineStyle.Layout.Row    = 6;
 ddLineStyle.Layout.Column = 2;
 
-lblDummy = uilabel(lineLayout, 'Text', '');
-lblDummy.Layout.Row    = 7;
-lblDummy.Layout.Column = [1 2];
+chkLineLegend = uicheckbox(lineLayout, ...
+    'Text', 'Show in legend', ...
+    'Value', true, ...
+    'ValueChangedFcn', @onLineLegendToggled);
+chkLineLegend.Layout.Row    = 7;
+chkLineLegend.Layout.Column = [1 2];
 
 % --- Axes properties panel ---
-axesPanel = uipanel(rightLayout, 'Title', 'Axes properties');
+axesPanel = uipanel(rightLayout, 'Title', 'Axes properties', 'BackgroundColor', [1 1 1]);
 axesPanel.Layout.Row    = 2;
 axesPanel.Layout.Column = 1;
 
@@ -248,10 +276,172 @@ lblStatus = uilabel(fig, ...
     'FontColor', [1 1 1], ...
     'Visible', 'off');
 
-%% Initialize workspace variables in dropdowns/listbox
+%% Initialize workspace variables in dropdowns/listbox and create default subplot
+applySubplotGrid(1, 1);
+setActiveSubplot(1);
 refreshWorkspaceControls();
 
 %% --- Nested helper and callback functions ---
+
+    function applySubplotGrid(rows, cols)
+        % Create or resize the subplot grid based on a table-like selection
+        rows = max(1, rows);
+        cols = max(1, cols);
+
+        centerLayout.RowHeight   = repmat({'1x'}, 1, rows);
+        centerLayout.ColumnWidth = repmat({'1x'}, 1, cols);
+
+        oldSubplots = state.subplots;
+        newCount    = rows * cols;
+
+        defaultSubplot = struct( ...
+            'axes',           [], ...
+            'lines',          struct('handle',{},'xName',{},'yName',{},'legend',{}), ...
+            'superpose',      false, ...
+            'legendVisible',  true, ...
+            'legendLocation', 'best');
+        newSubplots = repmat(defaultSubplot, 1, newCount);
+
+        for idx = 1:newCount
+            rIdx = ceil(idx / cols);
+            cIdx = mod(idx-1, cols) + 1;
+
+            if idx <= numel(oldSubplots) && isfield(oldSubplots(idx), 'axes') && ...
+                    isvalid(oldSubplots(idx).axes)
+                axLocal = oldSubplots(idx).axes;
+                axLocal.Layout.Row    = rIdx;
+                axLocal.Layout.Column = cIdx;
+                newSubplots(idx) = oldSubplots(idx);
+            else
+                axLocal = uiaxes(centerLayout);
+                axLocal.Layout.Row    = rIdx;
+                axLocal.Layout.Column = cIdx;
+                grid(axLocal, 'on');
+                title(axLocal, '');
+                xlabel(axLocal, '');
+                ylabel(axLocal, '');
+                axLocal.Color = [1 1 1];
+
+                newSubplots(idx).axes           = axLocal;
+                newSubplots(idx).superpose      = false;
+                newSubplots(idx).legendVisible  = true;
+                newSubplots(idx).legendLocation = ddLegendLocation.Value;
+            end
+
+            % Ensure line structs carry legend flag
+            for ln = 1:numel(newSubplots(idx).lines)
+                if ~isfield(newSubplots(idx).lines(ln), 'legend')
+                    newSubplots(idx).lines(ln).legend = true;
+                end
+            end
+        end
+
+        for idx = newCount+1:numel(oldSubplots)
+            if isfield(oldSubplots(idx), 'axes') && isvalid(oldSubplots(idx).axes)
+                delete(oldSubplots(idx).axes);
+            end
+        end
+
+        state.subplots     = newSubplots;
+        state.subplotRows  = rows;
+        state.subplotCols  = cols;
+        state.activeSubplot = min(state.activeSubplot, newCount);
+
+        setActiveSubplot(state.activeSubplot);
+    end
+
+    function setActiveSubplot(idx)
+        if idx < 1 || idx > numel(state.subplots)
+            return;
+        end
+
+        state.activeSubplot = idx;
+        ax = state.subplots(idx).axes;
+
+        rowIdx = ceil(idx / state.subplotCols);
+        colIdx = mod(idx-1, state.subplotCols) + 1;
+        lblActiveSubplot.Text = sprintf('Active subplot: (%d,%d)', rowIdx, colIdx);
+
+        chkSubplotSuperpose.Value = state.subplots(idx).superpose;
+
+        syncLegendControlsFromSubplot(idx);
+        refreshLineListFromSubplot();
+
+        % Sync axes text fields with the selected subplot
+        edtTitle.Value  = ax.Title.String;
+        edtXLabel.Value = ax.XLabel.String;
+        edtYLabel.Value = ax.YLabel.String;
+    end
+
+    function lines = getCurrentLines()
+        if isempty(state.subplots)
+            lines = struct('handle',{},'xName',{},'yName',{},'legend',{});
+            return;
+        end
+        lines = state.subplots(state.activeSubplot).lines;
+    end
+
+    function setCurrentLines(lines)
+        state.subplots(state.activeSubplot).lines = lines;
+    end
+
+    function refreshLineListFromSubplot()
+        lines = getCurrentLines();
+        items = {};
+        for k = 1:numel(lines)
+            if isvalid(lines(k).handle)
+                items{end+1} = lines(k).handle.DisplayName; %#ok<AGROW>
+            end
+        end
+
+        lbLines.Items = items;
+        if ~isempty(items)
+            lbLines.Value = items{1};
+        else
+            lbLines.Value = {};
+        end
+
+        syncStyleWithSelectedLine();
+    end
+
+    function onLayoutCellSelected(~, event)
+        if isempty(event.Indices)
+            return;
+        end
+
+        rows = event.Indices(1);
+        cols = event.Indices(2);
+
+        applySubplotGrid(rows, cols);
+
+        newIdx = sub2ind([state.subplotRows, state.subplotCols], rows, cols);
+        setActiveSubplot(newIdx);
+    end
+
+    function onSubplotSuperposeChanged(~, ~)
+        state.subplots(state.activeSubplot).superpose = chkSubplotSuperpose.Value;
+    end
+
+    function clearSubplot(idx)
+        if idx < 1 || idx > numel(state.subplots)
+            return;
+        end
+
+        subplotInfo = state.subplots(idx);
+        if isfield(subplotInfo, 'axes') && isvalid(subplotInfo.axes)
+            cla(subplotInfo.axes);
+        end
+
+        subplotInfo.lines = struct('handle',{},'xName',{},'yName',{},'legend',{});
+        state.subplots(idx) = subplotInfo;
+
+        if idx == state.activeSubplot
+            lbLines.Items = {};
+            lbLines.Value = {};
+            syncStyleWithSelectedLine();
+            updateLegend(subplotInfo.axes);
+        end
+    end
 
     function onRefreshWorkspace(~, ~)
         refreshWorkspaceControls();
@@ -306,18 +496,7 @@ refreshWorkspaceControls();
     end
 
     function onClearPlot(~, ~)
-        % Clear axes and line state
-        cla(ax);
-        state.lines   = struct('handle',{},'xName',{},'yName',{});
-        lbLines.Items = {};
-        lbLines.Value = {};
-        updateLegend();
-
-        % Reset style controls
-        edtLineName.Value        = '';
-        btnColor.BackgroundColor = [0 0.4470 0.7410];
-        spLineWidth.Value        = 1.5;
-        ddLineStyle.Value        = '-';
+        clearSubplot(state.activeSubplot);
     end
 
     function onPlot(~, ~)
@@ -358,15 +537,19 @@ refreshWorkspaceControls();
 
         xFlat = xVal(:);
 
-        superpose = chkSuperpose.Value;
+        subplotIdx  = state.activeSubplot;
+        subplotInfo = state.subplots(subplotIdx);
+        targetAx    = subplotInfo.axes;
+
+        superpose = subplotInfo.superpose;
 
         % Clear previous lines only if not superposing
         if ~superpose
-            cla(ax);
-            state.lines = struct('handle',{},'xName',{},'yName',{});
+            clearSubplot(subplotIdx);
+            subplotInfo = state.subplots(subplotIdx);
         end
 
-        hold(ax, 'on');
+        hold(targetAx, 'on');
 
         anyPlotted   = false;
         newLineItems = {};
@@ -405,7 +588,7 @@ refreshWorkspaceControls();
             end
 
             % Plot with default style
-            hLine = plot(ax, xFlat, yFlat, ...
+            hLine = plot(targetAx, xFlat, yFlat, ...
                 'LineWidth',   1.5, ...
                 'LineStyle',   '-', ...
                 'DisplayName', yName);
@@ -414,21 +597,27 @@ refreshWorkspaceControls();
             lineInfo.handle  = hLine;
             lineInfo.xName   = xName;
             lineInfo.yName   = yName;
-            state.lines(end+1) = lineInfo; %#ok<AGROW>
+            lineInfo.legend  = true;
+
+            set(hLine.Annotation.LegendInformation, 'IconDisplayStyle', 'on');
+
+            subplotInfo.lines(end+1) = lineInfo; %#ok<AGROW>
 
             anyPlotted      = true;
             newLineItems{end+1} = yName; %#ok<AGROW>
         end
 
-        hold(ax, 'off');
+        hold(targetAx, 'off');
+
+        state.subplots(subplotIdx) = subplotInfo;
 
         if ~anyPlotted
             % If nothing new was plotted, keep existing lines when
             % superposing, otherwise clear line list.
-            if ~superpose || isempty(state.lines)
+            if ~superpose || isempty(subplotInfo.lines)
                 lbLines.Items = {};
                 lbLines.Value = {};
-                updateLegend();
+                updateLegend(targetAx);
             end
             return;
         end
@@ -449,13 +638,14 @@ refreshWorkspaceControls();
         end
 
         syncStyleWithSelectedLine();
-        updateLegend();
+        updateLegend(targetAx);
     end
 
     function idx = getSelectedLineIndex()
-        % Return index of selected line in state.lines, or 0 if none
+        % Return index of selected line in the active subplot, or 0 if none
         idx = 0;
-        if isempty(state.lines) || isempty(lbLines.Items) || isempty(lbLines.Value)
+        lines = getCurrentLines();
+        if isempty(lines) || isempty(lbLines.Items) || isempty(lbLines.Value)
             return;
         end
         selValue = lbLines.Value;
@@ -464,7 +654,7 @@ refreshWorkspaceControls();
             allItems = {allItems};
         end
         idx = find(strcmp(selValue, allItems), 1, 'first');
-        if isempty(idx) || idx > numel(state.lines)
+        if isempty(idx) || idx > numel(lines)
             idx = 0;
         end
     end
@@ -480,10 +670,12 @@ refreshWorkspaceControls();
             btnColor.BackgroundColor = [0 0.4470 0.7410];
             spLineWidth.Value        = 1.5;
             ddLineStyle.Value        = '-';
+            chkLineLegend.Value      = true;
             return;
         end
 
-        hLine = state.lines(idx).handle;
+        lines = getCurrentLines();
+        hLine = lines(idx).handle;
         if ~isvalid(hLine)
             return;
         end
@@ -502,6 +694,9 @@ refreshWorkspaceControls();
 
         % Style
         ddLineStyle.Value = hLine.LineStyle;
+
+        legendInfo = hLine.Annotation.LegendInformation;
+        chkLineLegend.Value = strcmp(legendInfo.IconDisplayStyle, 'on');
     end
 
     function onLineNameChanged(~, ~)
@@ -509,17 +704,18 @@ refreshWorkspaceControls();
         if idx == 0
             return;
         end
-        hLine = state.lines(idx).handle;
+        lines = getCurrentLines();
+        hLine = lines(idx).handle;
         if ~isvalid(hLine)
             return;
         end
-        
+
         newName = edtLineName.Value;
         if isempty(newName)
-            newName = state.lines(idx).yName;
+            newName = lines(idx).yName;
         end
         hLine.DisplayName = newName;
-        
+
         items = lbLines.Items;
         if ischar(items)
             items = {items};
@@ -529,200 +725,301 @@ refreshWorkspaceControls();
         end
         lbLines.Items = items;
         lbLines.Value = newName;
-        
+
+        setCurrentLines(lines);
         updateLegend();
     end
 
-function onPickColor(~, ~)
-% Interactive color picker using uisetcolor
-idx = getSelectedLineIndex();
-if idx ~= 0 && isvalid(state.lines(idx).handle)
-    initColor = state.lines(idx).handle.Color;
-else
-    initColor = btnColor.BackgroundColor;
-end
+    function onLineLegendToggled(~, ~)
+        idx = getSelectedLineIndex();
+        if idx == 0
+            return;
+        end
 
-try
-    newColor = uisetcolor(initColor, 'Select line color');
-catch
-    newColor = initColor;
-end
+        lines = getCurrentLines();
+        hLine = lines(idx).handle;
+        if ~isvalid(hLine)
+            return;
+        end
 
-% Bring the plot menu figure back to the foreground
-try
-    figure(fig);
-catch
-end
+        showLegend = chkLineLegend.Value;
+        lines(idx).legend = showLegend;
+        set(hLine.Annotation.LegendInformation, 'IconDisplayStyle', ternary(showLegend, 'on', 'off'));
+        setCurrentLines(lines);
 
-if numel(newColor) ~= 3 || any(isnan(newColor))
-    return;
-end
-
-btnColor.BackgroundColor = newColor;
-
-% Apply to selected line if any
-idx = getSelectedLineIndex();
-if idx ~= 0
-    hLine = state.lines(idx).handle;
-    if isvalid(hLine)
-        hLine.Color = newColor;
-    end
-end
-end
-
-% onRGBChanged no longer used (kept for compatibility if needed)
-% function onRGBChanged(~, ~)
-% end
-
-function onWidthChanged(~, ~)
-    idx = getSelectedLineIndex();
-    if idx == 0
-        return;
-    end
-    hLine = state.lines(idx).handle;
-    if ~isvalid(hLine)
-        return;
-    end
-    hLine.LineWidth = spLineWidth.Value;
-end
-
-function onStyleChanged(~, ~)
-    idx = getSelectedLineIndex();
-    if idx == 0
-        return;
+        updateLegend();
     end
 
-    hLine = state.lines(idx).handle;
-    if ~isvalid(hLine)
-        return;
+    function out = ternary(cond, a, b)
+        if cond
+            out = a;
+        else
+            out = b;
+        end
     end
 
-    hLine.LineStyle = ddLineStyle.Value;
-end
+    function onPickColor(~, ~)
+        % Interactive color picker using uisetcolor
+        idx = getSelectedLineIndex();
+        lines = getCurrentLines();
+        if idx ~= 0 && idx <= numel(lines) && isvalid(lines(idx).handle)
+            initColor = lines(idx).handle.Color;
+        else
+            initColor = btnColor.BackgroundColor;
+        end
 
-function onAxesTextChanged(~, ~)
-    title(ax,  edtTitle.Value);
-    xlabel(ax, edtXLabel.Value);
-    ylabel(ax, edtYLabel.Value);
-end
+        try
+            newColor = uisetcolor(initColor, 'Select line color');
+        catch
+            newColor = initColor;
+        end
 
-function onLegendChanged(~, ~)
-    updateLegend();
-end
+        % Bring the plot menu figure back to the foreground
+        try
+            figure(fig);
+        catch
+        end
 
-function updateLegend()
-if isempty(state.lines)
-    legend(ax, 'off');
-    return;
-end
+        if numel(newColor) ~= 3 || any(isnan(newColor))
+            return;
+        end
 
-if chkLegend.Value
-    % Ensure a legend exists, then update its properties
-    lgd = legend(ax);
-    if ~isempty(lgd) && isvalid(lgd)
-        lgd.Location = ddLegendLocation.Value;
-        lgd.Visible  = 'on';
-    end
-else
-    legend(ax, 'off');
-end
-end
+        btnColor.BackgroundColor = newColor;
 
-function onExport(~, ~)
-if isempty(state.lines)
-    % Nothing to export, keep silent
-    return;
-end
-
-codeLines = {};
-codeLines{end+1} = '% Auto-generated by plotMenuPrototype';
-codeLines{end+1} = 'hFig = figure(''Name'',''Generated plot'');';
-codeLines{end+1} = 'ax  = axes(''Parent'', hFig);';
-codeLines{end+1} = 'hold(ax,''on'');';
-codeLines{end+1} = '';
-
-for k = 1:numel(state.lines)
-    info  = state.lines(k);
-    hLine = info.handle;
-    if ~isvalid(hLine)
-        continue;
+        % Apply to selected line if any
+        idx = getSelectedLineIndex();
+        lines = getCurrentLines();
+        if idx ~= 0
+            hLine = lines(idx).handle;
+            if isvalid(hLine)
+                hLine.Color = newColor;
+            end
+        end
     end
 
-    lw  = hLine.LineWidth;
-    ls  = hLine.LineStyle;
-    col = hLine.Color;
-    dn  = hLine.DisplayName;
-    dnEsc = strrep(dn, '''', '''''');
+    % onRGBChanged no longer used (kept for compatibility if needed)
+    % function onRGBChanged(~, ~)
+    % end
 
-    lineCode = sprintf( ...
-        'plot(ax, %s, %s, ''LineWidth'', %.3g, ''LineStyle'', ''%s'', ''Color'', [%.3g %.3g %.3g], ''DisplayName'', ''%s'');', ...
-        info.xName, info.yName, ...
-        lw, ls, ...
-        col(1), col(2), col(3), dnEsc);
-
-    codeLines{end+1} = lineCode; %#ok<AGROW>
-end
-
-codeLines{end+1} = 'hold(ax,''off'');';
-
-% Axes title / labels
-if ~isempty(ax.Title.String)
-    tStr = ax.Title.String;
-    tStr = strrep(tStr, '''', '''''');
-    codeLines{end+1} = sprintf('title(ax, ''%s'');', tStr);
-end
-if ~isempty(ax.XLabel.String)
-    xStr = ax.XLabel.String;
-    xStr = strrep(xStr, '''', '''''');
-    codeLines{end+1} = sprintf('xlabel(ax, ''%s'');', xStr);
-end
-if ~isempty(ax.YLabel.String)
-    yStr = ax.YLabel.String;
-    yStr = strrep(yStr, '''', '''''');
-    codeLines{end+1} = sprintf('ylabel(ax, ''%s'');', yStr);
-end
-
-% Legend
-if chkLegend.Value && ~isempty(state.lines)
-    codeLines{end+1} = sprintf( ...
-        'legend(ax, ''show'', ''Location'', ''%s'');', ...
-        ddLegendLocation.Value);
-else
-    codeLines{end+1} = 'legend(ax, ''off'');';
-end
-
-codeLines{end+1} = '';
-codeLines{end+1} = 'grid(ax,''on'');';
-
-codeStr = strjoin(codeLines, newline);
-
-try
-    clipboard('copy', codeStr);
-
-    % Show transient status text as a bottom-centered popup
-    lblStatus.Text = 'graph generation code copied to clipboard';
-
-    figPos      = fig.Position;
-    toastWidth  = 320;
-    toastHeight = 24;
-    lblStatus.Position = [ (figPos(3) - toastWidth) / 2, ...
-        10, ...
-        toastWidth, ...
-        toastHeight ];
-    lblStatus.Visible = 'on';
-
-    if ~isempty(statusTimer) && isvalid(statusTimer)
-        stop(statusTimer);
-        delete(statusTimer);
+    function onWidthChanged(~, ~)
+        idx = getSelectedLineIndex();
+        if idx == 0
+            return;
+        end
+        lines = getCurrentLines();
+        hLine = lines(idx).handle;
+        if ~isvalid(hLine)
+            return;
+        end
+        hLine.LineWidth = spLineWidth.Value;
     end
 
-    statusTimer = timer( ...
-        'StartDelay',    2, ...
-        'ExecutionMode', 'singleShot', ...
-        'TimerFcn',      @(~, ~) set(lblStatus, 'Visible', 'off'));
-    start(statusTimer);
-catch
-    % In case of failure, remain silent to avoid intrusive dialogs
-end
-end
+    function onStyleChanged(~, ~)
+        idx = getSelectedLineIndex();
+        if idx == 0
+            return;
+        end
+
+        lines = getCurrentLines();
+        hLine = lines(idx).handle;
+        if ~isvalid(hLine)
+            return;
+        end
+
+        hLine.LineStyle = ddLineStyle.Value;
+    end
+
+    function onAxesTextChanged(~, ~)
+        title(ax,  edtTitle.Value);
+        xlabel(ax, edtXLabel.Value);
+        ylabel(ax, edtYLabel.Value);
+    end
+
+    function onLegendChanged(~, ~)
+        idx = state.activeSubplot;
+        state.subplots(idx).legendVisible  = chkLegend.Value;
+        state.subplots(idx).legendLocation = ddLegendLocation.Value;
+        updateLegend(ax);
+    end
+
+    function updateLegend(axHandle)
+        if nargin < 1
+            axHandle = ax;
+        end
+
+        subplotIdx = findSubplotIndex(axHandle);
+        if subplotIdx == 0
+            legend(axHandle, 'off');
+            return;
+        end
+
+        subplotInfo = state.subplots(subplotIdx);
+        lines = subplotInfo.lines;
+
+        hasLegendLines = false;
+        for k = 1:numel(lines)
+            if isvalid(lines(k).handle) && strcmp(get(lines(k).handle.Annotation.LegendInformation, ...
+                    'IconDisplayStyle'), 'on')
+                hasLegendLines = true;
+                break;
+            end
+        end
+
+        if isempty(lines) || ~subplotInfo.legendVisible || ~hasLegendLines
+            legend(axHandle, 'off');
+            return;
+        end
+
+        lgd = legend(axHandle, 'show');
+        if ~isempty(lgd) && isvalid(lgd)
+            lgd.Location = subplotInfo.legendLocation;
+            lgd.Visible  = 'on';
+        end
+    end
+
+    function idx = findSubplotIndex(axHandle)
+        idx = 0;
+        for n = 1:numel(state.subplots)
+            if isequal(state.subplots(n).axes, axHandle)
+                idx = n;
+                return;
+            end
+        end
+    end
+
+    function syncLegendControlsFromSubplot(idx)
+        subplotInfo = state.subplots(idx);
+        chkLegend.Value = subplotInfo.legendVisible;
+
+        if ismember(subplotInfo.legendLocation, ddLegendLocation.Items)
+            ddLegendLocation.Value = subplotInfo.legendLocation;
+        else
+            ddLegendLocation.Value = 'best';
+            subplotInfo.legendLocation = 'best';
+            state.subplots(idx) = subplotInfo;
+        end
+
+        updateLegend(subplotInfo.axes);
+    end
+
+    function onExport(~, ~)
+        if isempty(state.subplots)
+            % Nothing to export, keep silent
+            return;
+        end
+
+        hasAnyLines = false;
+        for s = 1:numel(state.subplots)
+            if ~isempty(state.subplots(s).lines)
+                hasAnyLines = true;
+                break;
+            end
+        end
+        if ~hasAnyLines
+            return;
+        end
+
+        codeLines = {};
+        codeLines{end+1} = '% Auto-generated by plotMenuPrototype';
+        codeLines{end+1} = sprintf('hFig = figure(''Name'',''Generated plot'');');
+        codeLines{end+1} = sprintf('tiled = tiledlayout(hFig, %d, %d);', ...
+            state.subplotRows, state.subplotCols);
+        codeLines{end+1} = '';
+
+        for s = 1:numel(state.subplots)
+            subplotInfo = state.subplots(s);
+            if isempty(subplotInfo.lines)
+                continue;
+            end
+
+            codeLines{end+1} = sprintf('ax = nexttile(tiled, %d); hold(ax,''on'');', s); %#ok<AGROW>
+
+            for k = 1:numel(subplotInfo.lines)
+                info  = subplotInfo.lines(k);
+                hLine = info.handle;
+                if ~isvalid(hLine)
+                    continue;
+                end
+
+                lw  = hLine.LineWidth;
+                ls  = hLine.LineStyle;
+                col = hLine.Color;
+                dn  = hLine.DisplayName;
+                dnEsc = strrep(dn, '''', '''''');
+
+                lineCode = sprintf( ...
+                    'plot(ax, %s, %s, ''LineWidth'', %.3g, ''LineStyle'', ''%s'', ''Color'', [%.3g %.3g %.3g], ''DisplayName'', ''%s'');', ...
+                    info.xName, info.yName, ...
+                    lw, ls, ...
+                    col(1), col(2), col(3), dnEsc);
+
+                codeLines{end+1} = lineCode; %#ok<AGROW>
+            end
+
+            codeLines{end+1} = 'hold(ax,''off'');';
+
+            % Axes title / labels
+            axLocal = subplotInfo.axes;
+            if ~isempty(axLocal.Title.String)
+                tStr = axLocal.Title.String;
+                tStr = strrep(tStr, '''', '''''');
+                codeLines{end+1} = sprintf('title(ax, ''%s'');', tStr);
+            end
+            if ~isempty(axLocal.XLabel.String)
+                xStr = axLocal.XLabel.String;
+                xStr = strrep(xStr, '''', '''''');
+                codeLines{end+1} = sprintf('xlabel(ax, ''%s'');', xStr);
+            end
+            if ~isempty(axLocal.YLabel.String)
+                yStr = axLocal.YLabel.String;
+                yStr = strrep(yStr, '''', '''''');
+                codeLines{end+1} = sprintf('ylabel(ax, ''%s'');', yStr);
+            end
+
+            legendable = arrayfun(@(ln) isvalid(ln.handle) && ...
+                strcmp(get(ln.handle.Annotation.LegendInformation, 'IconDisplayStyle'), 'on'), ...
+                subplotInfo.lines);
+            if subplotInfo.legendVisible && any(legendable)
+                codeLines{end+1} = sprintf( ...
+                    'legend(ax, ''show'', ''Location'', ''%s'');', ...
+                    subplotInfo.legendLocation);
+            else
+                codeLines{end+1} = 'legend(ax, ''off'');';
+            end
+
+            codeLines{end+1} = 'grid(ax,''on'');';
+            codeLines{end+1} = '';
+        end
+
+        codeStr = strjoin(codeLines, newline);
+
+        try
+            clipboard('copy', codeStr);
+
+            % Show transient status text as a bottom-centered popup
+            lblStatus.Text = 'graph generation code copied to clipboard';
+
+            figPos      = fig.Position;
+            toastWidth  = 320;
+            toastHeight = 24;
+            lblStatus.Position = [ (figPos(3) - toastWidth) / 2, ...
+                10, ...
+                toastWidth, ...
+                toastHeight ];
+            lblStatus.Visible = 'on';
+
+            if ~isempty(statusTimer) && isvalid(statusTimer)
+                stop(statusTimer);
+                delete(statusTimer);
+            end
+
+            statusTimer = timer( ...
+                'StartDelay',    2, ...
+                'ExecutionMode', 'singleShot', ...
+                'TimerFcn',      @(~, ~) set(lblStatus, 'Visible', 'off'));
+            start(statusTimer);
+        catch
+            % In case of failure, remain silent to avoid intrusive dialogs
+        end
+    end
 end
