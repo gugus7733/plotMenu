@@ -22,27 +22,28 @@ state.activeSubplot = 1;
 
 %% Create main UI
 fig = uifigure( ...
-    'Name',     'Plot Menu Prototype', ...
+    'Name',     'Plot Menu', ...
     'Position', [100 100 1400 800], ...
     'Color',    [1 1 1]);
 
 mainLayout = uigridlayout(fig, [1 3]);
-mainLayout.ColumnWidth = {280, '1x', 320};
+mainLayout.ColumnWidth = {'1x', '2x', '1x'};
 
 %% Left panel: data selection
-leftPanel  = uipanel(mainLayout, 'Title', 'Data selection', 'BackgroundColor', [1 1 1]);
+leftPanel  = uipanel(mainLayout, 'Title', 'Data selection', 'BackgroundColor', [1 1 1], ...
+    'Scrollable', 'on');
 leftPanel.Layout.Row    = 1;
 leftPanel.Layout.Column = 1;
 
 leftLayout = uigridlayout(leftPanel, [11 1]);
-leftLayout.RowHeight = {200, 30, 20, 30, 20, 30, 20, '1x', 30, 20, 30};
+leftLayout.RowHeight = {'fit', 'fit', 'fit', 'fit', 'fit', 'fit', '1x', 'fit', 'fit', 'fit', 'fit'};
 
 subplotPanel = uipanel(leftLayout, 'Title', 'Subplots', 'BackgroundColor', [1 1 1]);
 subplotPanel.Layout.Row    = 1;
 subplotPanel.Layout.Column = 1;
 
 subplotLayout = uigridlayout(subplotPanel, [5 1]);
-subplotLayout.RowHeight   = {20, 120, 20, 30, 30};
+subplotLayout.RowHeight   = {'fit', '1x', 'fit', 'fit', 'fit'};
 subplotLayout.BackgroundColor = [1 1 1];
 
 lblLayoutHint = uilabel(subplotLayout, ...
@@ -120,12 +121,13 @@ centerLayout.RowHeight   = {'1x'};
 centerLayout.ColumnWidth = {'1x'};
 
 %% Right panel: line style, axes properties, export
-rightPanel  = uipanel(mainLayout, 'Title', 'Style / Export', 'BackgroundColor', [1 1 1]);
+rightPanel  = uipanel(mainLayout, 'Title', 'Style / Export', 'BackgroundColor', [1 1 1], ...
+    'Scrollable', 'on');
 rightPanel.Layout.Row    = 1;
 rightPanel.Layout.Column = 3;
 
 rightLayout = uigridlayout(rightPanel, [3 1]);
-rightLayout.RowHeight = {240, 240, 40};
+rightLayout.RowHeight = {'1x', '1x', 'fit'};
 
 % Bottom panel: export button + status label
 bottomPanel = uipanel(rightLayout, 'BorderType', 'none');
