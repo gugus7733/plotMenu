@@ -1,4 +1,4 @@
-function plotMenuPrototype
+function plotMenu
 % plotMenuPrototype - Interactive plot menu prototype.
 %
 % Usage:
