@@ -27,6 +27,8 @@ state.subplots = struct('axes',{},'lines',{},'superpose',{},'legendVisible',{},'
 state.subplotRows = 1;
 state.subplotCols = 1;
 state.activeSubplot = 1;
+state.workspaceMeta = struct('name',{},'class',{},'size',{},'isSupportedArray',{},'numel',{},'isIntegerScalar',{},'kind',{},'scalarValue',{});
+state.customYItems  = struct('label',{},'expression',{},'length',{});
 
 %% Create main UI
 fig = uifigure( ...
@@ -44,7 +46,7 @@ leftPanel.Layout.Row    = 1;
 leftPanel.Layout.Column = 1;
 
 leftLayout = uigridlayout(leftPanel, [11 1]);
-leftLayout.RowHeight = {'fit', 'fit', 'fit', 'fit', 'fit', 'fit', '1x', 'fit', 'fit', 'fit', 'fit'};
+leftLayout.RowHeight = {'fit', 'fit', 'fit', 'fit', 'fit', '1x', 'fit', 'fit', 'fit', 'fit', 'fit'};
 
 subplotPanel = uipanel(leftLayout, 'Title', 'Subplots', 'BackgroundColor', [1 1 1]);
 subplotPanel.Layout.Row    = 1;
@@ -90,7 +92,8 @@ lblXVar.Layout.Column = 1;
 
 ddXVar = uidropdown(leftLayout, ...
     'Items', {''}, ...
-    'Value', '');
+    'Value', '', ...
+    'ValueChangedFcn', @onXSelectionChanged);
 ddXVar.Layout.Row    = 4;
 ddXVar.Layout.Column = 1;
 
@@ -103,6 +106,12 @@ lbYVar = uilistbox(leftLayout, ...
     'Multiselect','on');
 lbYVar.Layout.Row    = 6;
 lbYVar.Layout.Column = 1;
+
+btnOtherData = uibutton(leftLayout, ...
+    'Text', 'Other data types', ...
+    'ButtonPushedFcn', @onOpenOtherData);
+btnOtherData.Layout.Row    = 7;
+btnOtherData.Layout.Column = 1;
 
 btnPlot = uibutton(leftLayout, ...
     'Text',          'Plot selected', ...
@@ -144,7 +153,7 @@ linePanel.Layout.Column = 1;
 
 lineLayout = uigridlayout(linePanel, [10 3]);
 lineLayout.RowHeight   = {20, 40, 20, 24, 30, 30, 30, 30, 30, '1x'};
-lineLayout.ColumnWidth = {80, '1x', 70};
+lineLayout.ColumnWidth = {80, '1x', '1x'};
 
 lblLines = uilabel(lineLayout, 'Text', 'Lines:');
 lblLines.Layout.Row    = 1;
@@ -545,51 +554,568 @@ refreshWorkspaceControls();
     end
 
     function refreshWorkspaceControls()
-        % Find valid variables in base workspace:
-        % numeric, logical, datetime, duration arrays.
-        vars       = evalin('base', 'whos');
-        validNames = {};
+        state.workspaceMeta = getWorkspaceSnapshot();
 
-        for k = 1:numel(vars)
-            name = vars(k).name;
-            try
-                val = evalin('base', name);
-                if isSupportedArray(val)
-                    validNames{end+1} = name; %#ok<AGROW>
-                end
-            catch
-                % Ignore variables that cannot be evaluated
-            end
-        end
+        validNames = {state.workspaceMeta([state.workspaceMeta.isSupportedArray]).name};
 
         if isempty(validNames)
             ddXVar.Items   = {'<no valid arrays>'};
             ddXVar.Value   = '<no valid arrays>';
             ddXVar.Enable  = 'off';
 
-            lbYVar.Items   = {};
-            lbYVar.Value   = {};
-            lbYVar.Enable  = 'off';
+            lbYVar.Items     = {};
+            lbYVar.ItemsData = {};
+            lbYVar.Value     = {};
+            lbYVar.Enable    = 'off';
 
             btnPlot.Enable = 'off';
-        else
-            ddXVar.Items = ['<select X>', validNames];
-            if ~ismember(ddXVar.Value, ddXVar.Items)
-                ddXVar.Value = '<select X>';
-            end
-            ddXVar.Enable = 'on';
-
-            lbYVar.Items  = validNames;
-            lbYVar.Value  = {};
-            lbYVar.Enable = 'on';
-
-            btnPlot.Enable = 'on';
+            return;
         end
+
+        ddXVar.Items = ['<select X>', validNames];
+        if ~ismember(ddXVar.Value, ddXVar.Items)
+            ddXVar.Value = '<select X>';
+        end
+        ddXVar.Enable = 'on';
+
+        updateYListForX();
     end
 
     function tf = isSupportedArray(val)
         tf = isnumeric(val) || islogical(val) || ...
             isdatetime(val) || isduration(val);
+    end
+
+    function meta = getWorkspaceSnapshot()
+        % Gather workspace metadata for arrays and containers
+        vars = evalin('base', 'whos');
+        meta = struct('name',{},'class',{},'size',{},'isSupportedArray',{},'numel',{},'isIntegerScalar',{},'kind',{},'scalarValue',{});
+
+        for k = 1:numel(vars)
+            name = vars(k).name;
+
+            info = struct('name', name, 'class', '', 'size', [], ...
+                'isSupportedArray', false, 'numel', 0, ...
+                'isIntegerScalar', false, 'kind', '', 'scalarValue', []);
+
+            try
+                val = evalin('base', name);
+            catch
+                continue;
+            end
+
+            info.class            = class(val);
+            info.size             = size(val);
+            info.isSupportedArray = isSupportedArray(val);
+            info.numel            = numel(val);
+            info.kind             = classifyValueKind(val);
+            info.isIntegerScalar  = isscalar(val) && isnumeric(val) && isfinite(val) && val == round(val);
+            if info.isIntegerScalar
+                info.scalarValue = double(val);
+            end
+
+            meta(end+1) = info; %#ok<AGROW>
+        end
+    end
+
+    function kind = classifyValueKind(val)
+        if istable(val)
+            kind = 'table';
+            return;
+        end
+
+        if isstruct(val)
+            kind = 'struct';
+            return;
+        end
+
+        if iscell(val)
+            kind = 'cell';
+            return;
+        end
+
+        if isSupportedArray(val)
+            kind = 'array';
+            return;
+        end
+
+        kind = 'other';
+    end
+
+    function onXSelectionChanged(~, ~)
+        updateYListForX();
+    end
+
+    function updateYListForX()
+        validateCustomItems();
+
+        arrayMeta = state.workspaceMeta([state.workspaceMeta.isSupportedArray]);
+        yItems = {};
+        yData  = {};
+        xLen   = getSelectedXLength();
+
+        for k = 1:numel(arrayMeta)
+            if ~isempty(xLen) && arrayMeta(k).numel ~= xLen
+                continue;
+            end
+            [yItems, yData] = appendYEntry(yItems, yData, arrayMeta(k).name, arrayMeta(k).name); %#ok<AGROW>
+        end
+
+        for k = 1:numel(state.customYItems)
+            item = state.customYItems(k);
+            if ~isempty(xLen) && ~isempty(item.length) && item.length ~= xLen
+                continue;
+            end
+            [yItems, yData] = appendYEntry(yItems, yData, item.label, item.expression); %#ok<AGROW>
+        end
+
+        lbYVar.Items     = yItems;
+        lbYVar.ItemsData = yData;
+        lbYVar.Value     = {};
+        lbYVar.Enable    = ternary(~isempty(yItems), 'on', 'off');
+
+        syncPlotButtonState();
+    end
+
+    function [items, data] = appendYEntry(items, data, label, expr)
+        items{end+1} = label; %#ok<AGROW>
+        data{end+1}  = struct('label', label, 'expression', expr); %#ok<AGROW>
+    end
+
+    function validateCustomItems()
+        validEntries = struct('label',{},'expression',{},'length',{});
+        for k = 1:numel(state.customYItems)
+            item = state.customYItems(k);
+            try
+                val = evalin('base', item.expression);
+            catch
+                continue;
+            end
+
+            if ~isSupportedArray(val)
+                continue;
+            end
+
+            item.length = numel(val);
+            validEntries(end+1) = item; %#ok<AGROW>
+        end
+
+        state.customYItems = validEntries;
+    end
+
+    function len = getSelectedXLength()
+        len = [];
+        xName = ddXVar.Value;
+        if strcmp(xName, '<select X>') || strcmp(xName, '<no valid arrays>') || isempty(xName)
+            return;
+        end
+
+        idx = find(strcmp({state.workspaceMeta.name}, xName), 1);
+        if ~isempty(idx)
+            len = state.workspaceMeta(idx).numel;
+            return;
+        end
+
+        try
+            len = numel(evalin('base', xName));
+        catch
+        end
+    end
+
+    function syncPlotButtonState()
+        hasX = ~(strcmp(ddXVar.Value, '<select X>') || strcmp(ddXVar.Value, '<no valid arrays>'));
+        hasY = ~isempty(lbYVar.Items);
+        btnPlot.Enable = ternary(hasX && hasY, 'on', 'off');
+    end
+
+    function addCustomYItem(label, expr, len)
+        if nargin < 3
+            len = [];
+        end
+
+        % Drop existing entries that rely on the same expression
+        keepMask = true(1, numel(state.customYItems));
+        for k = 1:numel(state.customYItems)
+            keepMask(k) = ~strcmp(state.customYItems(k).expression, expr);
+        end
+        state.customYItems = state.customYItems(keepMask);
+
+        state.customYItems(end+1) = struct('label', label, 'expression', expr, 'length', len); %#ok<AGROW>
+    end
+
+    function integers = getIntegerVariables()
+        integers = state.workspaceMeta([state.workspaceMeta.isIntegerScalar]);
+    end
+
+    function tf = isContainerCandidate(metaEntry)
+        tf = ismember(metaEntry.kind, {'struct', 'cell', 'table'});
+        if tf
+            return;
+        end
+
+        if strcmp(metaEntry.kind, 'array')
+            tf = numel(metaEntry.size) >= 2 && metaEntry.size(2) > 1;
+            return;
+        end
+
+        tf = false;
+    end
+
+    function txt = sizeToString(sz)
+        if isempty(sz)
+            txt = '';
+            return;
+        end
+        txt = strjoin(string(sz), 'x');
+    end
+
+    function onOpenOtherData(~, ~)
+        if strcmp(ddXVar.Value, '<select X>') || strcmp(ddXVar.Value, '<no valid arrays>')
+            uialert(fig, 'Please select an X variable first so compatible choices can be highlighted.', ...
+                'Select X variable');
+            return;
+        end
+
+        state.workspaceMeta = getWorkspaceSnapshot();
+        candidates = state.workspaceMeta(arrayfun(@(m) isContainerCandidate(m), state.workspaceMeta));
+
+        if isempty(candidates)
+            uialert(fig, 'No structures, cell arrays, tables, or multi-column arrays found in the workspace.', ...
+                'Nothing to explore');
+            return;
+        end
+
+        xLenLocal = getSelectedXLength();
+
+        otherFig = uifigure('Name', 'Other workspace data', ...
+            'Position', [200 200 820 520], 'Color', [1 1 1]);
+        otherFig.WindowStyle = 'modal';
+
+        popupGrid = uigridlayout(otherFig, [3 2]);
+        popupGrid.RowHeight = {'fit', '1x', 'fit'};
+        popupGrid.ColumnWidth = {260, '1x'};
+
+        lblIntro = uilabel(popupGrid, ...
+            'Text', 'Browse complex workspace variables. Only selections compatible with the current X length will be accepted.', ...
+            'WordWrap', 'on');
+        lblIntro.Layout.Row    = 1;
+        lblIntro.Layout.Column = [1 2];
+
+        containerLabels = arrayfun(@(m) sprintf('%s (%s [%s])', m.name, m.kind, sizeToString(m.size)), ...
+            candidates, 'UniformOutput', false);
+        lstContainers = uilistbox(popupGrid, ...
+            'Items', containerLabels, ...
+            'ItemsData', num2cell(1:numel(candidates)), ...
+            'Multiselect', 'off');
+        lstContainers.Layout.Row    = 2;
+        lstContainers.Layout.Column = 1;
+
+        detailPanel = uipanel(popupGrid, 'Title', 'Selection details', 'BackgroundColor', [1 1 1]);
+        detailPanel.Layout.Row    = 2;
+        detailPanel.Layout.Column = 2;
+
+        detailGrid = uigridlayout(detailPanel, [7 2]);
+        detailGrid.RowHeight   = {'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit'};
+        detailGrid.ColumnWidth = {150, '1x'};
+
+        lblDetails = uilabel(detailGrid, 'Text', 'Select a variable to begin.', 'WordWrap', 'on');
+        lblDetails.Layout.Row    = 1;
+        lblDetails.Layout.Column = [1 2];
+
+        lblSubSelection = uilabel(detailGrid, 'Text', 'Field / column:', 'Visible', 'off');
+        lblSubSelection.Layout.Row    = 2;
+        lblSubSelection.Layout.Column = 1;
+        ddSubSelection = uidropdown(detailGrid, 'Items', {}, 'Visible', 'off');
+        ddSubSelection.Layout.Row    = 2;
+        ddSubSelection.Layout.Column = 2;
+
+        lblIndexMode = uilabel(detailGrid, 'Text', 'Index mode:', 'Visible', 'off');
+        lblIndexMode.Layout.Row    = 3;
+        lblIndexMode.Layout.Column = 1;
+        ddIndexMode = uidropdown(detailGrid, 'Items', {}, 'Visible', 'off');
+        ddIndexMode.Layout.Row    = 3;
+        ddIndexMode.Layout.Column = 2;
+
+        lblIndexValue = uilabel(detailGrid, 'Text', 'Index value:', 'Visible', 'off');
+        lblIndexValue.Layout.Row    = 4;
+        lblIndexValue.Layout.Column = 1;
+        edtIndexValue = uieditfield(detailGrid, 'numeric', ...
+            'Visible', 'off', 'Limits', [1 Inf], 'RoundFractionalValues', true, 'Value', 1);
+        edtIndexValue.Layout.Row    = 4;
+        edtIndexValue.Layout.Column = 2;
+
+        lblIndexVars = uilabel(detailGrid, 'Text', 'Or pick integer from workspace:', 'Visible', 'off');
+        lblIndexVars.Layout.Row    = 5;
+        lblIndexVars.Layout.Column = 1;
+        ddIndexVars = uidropdown(detailGrid, 'Items', {'<none>'}, 'ItemsData', {''}, ...
+            'Visible', 'off', 'Value', '');
+        ddIndexVars.Layout.Row    = 5;
+        ddIndexVars.Layout.Column = 2;
+
+        lblPopupStatus = uilabel(detailGrid, 'Text', ' ', 'WordWrap', 'on', 'Visible', 'off', ...
+            'FontColor', [0.1 0.5 0.1]);
+        lblPopupStatus.Layout.Row    = 6;
+        lblPopupStatus.Layout.Column = [1 2];
+
+        btnAddFromOther = uibutton(detailGrid, 'Text', 'Add selection to Y list', ...
+            'Enable', 'off');
+        btnAddFromOther.Layout.Row    = 7;
+        btnAddFromOther.Layout.Column = [1 2];
+
+        btnClose = uibutton(popupGrid, 'Text', 'Close explorer', ...
+            'ButtonPushedFcn', @(~, ~) close(otherFig));
+        btnClose.Layout.Row    = 3;
+        btnClose.Layout.Column = [1 2];
+
+        integerVars = getIntegerVariables();
+        idxItems = ['<none>', arrayfun(@(v) sprintf('%s (%g)', v.name, v.scalarValue), integerVars, 'UniformOutput', false)];
+        idxData  = [{''}, arrayfun(@(v) v.name, integerVars, 'UniformOutput', false)];
+        ddIndexVars.Items     = idxItems;
+        ddIndexVars.ItemsData = idxData;
+
+        currentMeta = [];
+
+        lstContainers.ValueChangedFcn = @onContainerChanged;
+        ddIndexVars.ValueChangedFcn   = @onIndexVarChanged;
+        btnAddFromOther.ButtonPushedFcn = @onAddFromOther;
+
+        if ~isempty(lstContainers.ItemsData)
+            lstContainers.Value = lstContainers.ItemsData{1};
+            onContainerChanged();
+        end
+
+        function onContainerChanged(~, ~)
+            idx = lstContainers.Value;
+            if isempty(idx)
+                return;
+            end
+
+            currentMeta = candidates(idx);
+            lblDetails.Text = sprintf('%s (%s) size [%s]', currentMeta.name, currentMeta.class, sizeToString(currentMeta.size));
+            resetSelectors();
+
+            switch currentMeta.kind
+                case 'table'
+                    try
+                        tblVal = evalin('base', currentMeta.name);
+                        colNames = tblVal.Properties.VariableNames;
+                    catch
+                        colNames = {};
+                    end
+
+                    ddSubSelection.Items    = colNames;
+                    ddSubSelection.Visible  = true;
+                    lblSubSelection.Visible = true;
+                    lblSubSelection.Text    = 'Column:';
+                    if ~isempty(colNames)
+                        ddSubSelection.Value = colNames{1};
+                        btnAddFromOther.Enable = 'on';
+                    else
+                        btnAddFromOther.Enable = 'off';
+                    end
+
+                case 'struct'
+                    fields = {};
+                    try
+                        stVal = evalin('base', currentMeta.name);
+                        fields = fieldnames(stVal);
+                    catch
+                    end
+
+                    ddSubSelection.Items    = fields;
+                    ddSubSelection.Visible  = true;
+                    lblSubSelection.Visible = true;
+                    lblSubSelection.Text    = 'Field:';
+                    btnAddFromOther.Enable  = ~isempty(fields);
+                    if ~isempty(fields)
+                        ddSubSelection.Value = fields{1};
+                    end
+
+                    showIndexControls(numel(currentMeta.size) > 1 && prod(currentMeta.size) > 1, false);
+
+                case 'cell'
+                    ddSubSelection.Visible  = false;
+                    lblSubSelection.Visible = false;
+                    showIndexControls(true, false);
+                    btnAddFromOther.Enable = 'on';
+
+                case 'array'
+                    ddSubSelection.Visible  = false;
+                    lblSubSelection.Visible = false;
+                    hasMultipleColumns = numel(currentMeta.size) >= 2 && currentMeta.size(2) > 1;
+                    showIndexControls(hasMultipleColumns, true);
+                    if hasMultipleColumns
+                        ddIndexMode.Items = {'Column', 'Row', 'Linear index'};
+                        ddIndexMode.Value = 'Column';
+                        btnAddFromOther.Enable = 'on';
+                    else
+                        btnAddFromOther.Enable = 'off';
+                    end
+            end
+        end
+
+        function showIndexControls(flag, includeMode)
+            if nargin < 2
+                includeMode = false;
+            end
+            lblIndexValue.Visible = flag;
+            edtIndexValue.Visible = flag;
+            lblIndexVars.Visible  = flag;
+            ddIndexVars.Visible   = flag;
+
+            lblIndexMode.Visible = flag && includeMode;
+            ddIndexMode.Visible  = flag && includeMode;
+        end
+
+        function resetSelectors()
+            btnAddFromOther.Enable = 'off';
+            lblPopupStatus.Visible = 'off';
+            ddSubSelection.Visible = false;
+            lblSubSelection.Visible = false;
+            showIndexControls(false, false);
+            ddIndexVars.Value = '';
+            edtIndexValue.Value = 1;
+        end
+
+        function onIndexVarChanged(~, ~)
+            idxVarName = ddIndexVars.Value;
+            if isempty(idxVarName)
+                return;
+            end
+
+            match = find(strcmp(idxData, idxVarName), 1);
+            if ~isempty(match) && match > 1
+                edtIndexValue.Value = integerVars(match-1).scalarValue;
+            end
+        end
+
+        function idxStr = getIndexString()
+            idxStr = '';
+            idxVarName = ddIndexVars.Value;
+            if ~isempty(idxVarName)
+                idxStr = idxVarName;
+                return;
+            end
+
+            idxVal = edtIndexValue.Value;
+            if isempty(idxVal) || isnan(idxVal)
+                return;
+            end
+            idxStr = sprintf('%d', round(idxVal));
+        end
+
+        function setStatus(msg, isError)
+            if nargin < 2
+                isError = false;
+            end
+            lblPopupStatus.Text    = msg;
+            lblPopupStatus.Visible = true;
+            if isError
+                lblPopupStatus.FontColor = [0.75 0 0];
+            else
+                lblPopupStatus.FontColor = [0.1 0.5 0.1];
+            end
+        end
+
+        function [expr, label] = buildExpression()
+            expr  = '';
+            label = '';
+            if isempty(currentMeta)
+                return;
+            end
+
+            switch currentMeta.kind
+                case 'table'
+                    if isempty(ddSubSelection.Items)
+                        return;
+                    end
+                    colName = ddSubSelection.Value;
+                    expr  = sprintf('%s.%s', currentMeta.name, colName);
+                    label = expr;
+
+                case 'struct'
+                    if isempty(ddSubSelection.Items)
+                        return;
+                    end
+                    fieldName = ddSubSelection.Value;
+                    if prod(currentMeta.size) > 1
+                        idxStr = getIndexString();
+                        if isempty(idxStr)
+                            setStatus('Provide a valid struct index.', true);
+                            return;
+                        end
+                        expr  = sprintf('%s(%s).%s', currentMeta.name, idxStr, fieldName);
+                        label = expr;
+                    else
+                        expr  = sprintf('%s.%s', currentMeta.name, fieldName);
+                        label = expr;
+                    end
+
+                case 'cell'
+                    idxStr = getIndexString();
+                    if isempty(idxStr)
+                        setStatus('Provide a cell index to extract.', true);
+                        return;
+                    end
+                    expr  = sprintf('%s{%s}', currentMeta.name, idxStr);
+                    label = sprintf('%s{%s}', currentMeta.name, idxStr);
+
+                case 'array'
+                    idxStr = getIndexString();
+                    if isempty(idxStr)
+                        setStatus('Provide an index for the array slice.', true);
+                        return;
+                    end
+                    if ddIndexMode.Visible
+                        switch ddIndexMode.Value
+                            case 'Row'
+                                expr  = sprintf('%s(%s,:)', currentMeta.name, idxStr);
+                                label = sprintf('%s row %s', currentMeta.name, idxStr);
+                            case 'Column'
+                                expr  = sprintf('%s(:,%s)', currentMeta.name, idxStr);
+                                label = sprintf('%s(:,%s)', currentMeta.name, idxStr);
+                            otherwise
+                                expr  = sprintf('%s(%s)', currentMeta.name, idxStr);
+                                label = sprintf('%s(%s)', currentMeta.name, idxStr);
+                        end
+                    else
+                        expr  = currentMeta.name;
+                        label = currentMeta.name;
+                    end
+            end
+        end
+
+        function onAddFromOther(~, ~)
+            [expr, label] = buildExpression();
+            if isempty(expr)
+                return;
+            end
+
+            try
+                candidateVal = evalin('base', expr);
+            catch ME
+                setStatus(sprintf('Cannot evaluate "%s": %s', expr, ME.message), true);
+                return;
+            end
+
+            if ~isSupportedArray(candidateVal)
+                setStatus('Selected data is not a plottable array.', true);
+                return;
+            end
+
+            if ~isempty(xLenLocal) && numel(candidateVal(:)) ~= xLenLocal
+                setStatus(sprintf('Length mismatch: X has %d elements but selection has %d.', ...
+                    xLenLocal, numel(candidateVal(:))), true);
+                return;
+            end
+
+            addCustomYItem(label, expr, numel(candidateVal(:)));
+            updateYListForX();
+            if ~isempty(lbYVar.ItemsData)
+                lbYVar.Value = lbYVar.ItemsData{end};
+            end
+            setStatus(sprintf('Added "%s" to Y list.', label), false);
+        end
     end
 
     function onClearPlot(~, ~)
@@ -609,7 +1135,9 @@ refreshWorkspaceControls();
         xName = ddXVar.Value;
 
         ySelection = lbYVar.Value;
-        if ischar(ySelection)
+        if isstruct(ySelection)
+            ySelection = {ySelection};
+        elseif ischar(ySelection)
             ySelection = {ySelection};
         end
         if isempty(ySelection)
@@ -652,16 +1180,25 @@ refreshWorkspaceControls();
         newLineHandles = {};
 
         for k = 1:numel(ySelection)
-            yName = ySelection{k};
+            yLabel = '';
+            yExpr  = '';
+            if isstruct(ySelection{k}) && isfield(ySelection{k}, 'expression')
+                yExpr  = ySelection{k}.expression;
+                yLabel = ySelection{k}.label;
+            else
+                yExpr  = ySelection{k};
+                yLabel = char(string(ySelection{k}));
+            end
+
             try
-                yVal = evalin('base', yName);
+                yVal = evalin('base', yExpr);
             catch ME
                 uialert(fig, sprintf('Cannot evaluate Y variable "%s":\n%s', ...
-                    yName, ME.message), 'Error evaluating Y');
+                    yLabel, ME.message), 'Error evaluating Y');
                 continue;
             end
             if ~isSupportedArray(yVal)
-                uialert(fig, sprintf('Y variable "%s" is not a supported array type.', yName), ...
+                uialert(fig, sprintf('Y variable "%s" is not a supported array type.', yLabel), ...
                     'Invalid Y variable');
                 continue;
             end
@@ -670,7 +1207,7 @@ refreshWorkspaceControls();
             if numel(xFlat) ~= numel(yFlat)
                 uialert(fig, sprintf( ...
                     'X (%s) and Y (%s) have different number of elements (%d vs %d). Skipping "%s".', ...
-                    xName, yName, numel(xFlat), numel(yFlat), yName), ...
+                    xName, yLabel, numel(xFlat), numel(yFlat), yLabel), ...
                     'Size mismatch');
                 continue;
             end
@@ -679,14 +1216,14 @@ refreshWorkspaceControls();
             hLine = plot(targetAx, xFlat, yFlat, ...
                 'LineWidth',   1.5, ...
                 'LineStyle',   '-', ...
-                'DisplayName', yName);
+                'DisplayName', yLabel);
 
             wireLineInteractivity(hLine);
 
             lineInfo         = struct();
             lineInfo.handle  = hLine;
             lineInfo.xName   = xName;
-            lineInfo.yName   = yName;
+            lineInfo.yName   = yExpr;
             lineInfo.legend  = true;
             lineInfo.datatips = zeros(0, 2);
 
@@ -1164,6 +1701,17 @@ refreshWorkspaceControls();
         state.subplots(subplotIdx).lines = lines;
     end
 
+    function dtObjects = findDatatipObjects(axHandle)
+        if nargin < 1 || isempty(axHandle) || ~isvalid(axHandle)
+            dtObjects = gobjects(0, 1);
+            return;
+        end
+
+        dtByType  = findall(axHandle, 'Type', 'datatip');
+        dtByClass = findall(axHandle, '-class', 'matlab.graphics.datatip.DataTip');
+        dtObjects = unique([dtByType(:); dtByClass(:)], 'stable');
+    end
+
     function tgt = getTarget(dtObj)
         tgt = [];
         if isempty(dtObj) || ~isvalid(dtObj)
@@ -1195,7 +1743,7 @@ refreshWorkspaceControls();
             subplotInfo.lines(lnIdx).datatips = zeros(0, 2);
         end
 
-        dtObjects = findall(axLocal, '-class', 'matlab.graphics.datatip.DataTip');
+        dtObjects = findDatatipObjects(axLocal);
         for dt = dtObjects.'
             tgt = getTarget(dt);
             if isempty(tgt)
@@ -1417,7 +1965,7 @@ refreshWorkspaceControls();
                     dtPositions = subplotInfo.lines(dtIdx).datatips;
                 end
                 if isempty(dtPositions)
-                    dtObjects = findall(axLocal, '-class', 'matlab.graphics.datatip.DataTip');
+                    dtObjects = findDatatipObjects(axLocal);
                     targetHandle = subplotInfo.lines(dtIdx).handle;
                     dtPositions = cell2mat(arrayfun(@(dt) reshape(dt.Position(1, 1:2), 1, 2), ...
                         dtObjects(arrayfun(@(dt) isequal(getTarget(dt), targetHandle), dtObjects)), ...

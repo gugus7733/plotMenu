@@ -59,6 +59,7 @@ sensors.pressure.hPa = 1013 + 3*sin(0.3*slowTime + 0.4);
 
 multiChannelMatrix = [sineWave; noisySine; stepSignal; impulseTrain; largeSpikeSignal]';
 channelNames       = {"sine", "noisy", "step", "impulses", "spike"};
+matrixWithMeta    = [sineWave.', noisySine.', linearRamp.'];
 
 %% Cell arrays and text-heavy inputs
 cellSignals = { ...
@@ -70,6 +71,23 @@ descriptions = { ...
     'Baseline sine', 'Noisy sine'; ...
     'Unit step',     'Impulse grid'; ...
     'NaN gap',       'Linear ramp'};
+
+%% Integer indices for popup exploration
+colIndex   = int32(2);
+rowIndex   = 3;
+elementIdx = uint8(5);
+
+%% Tables for indexed access
+signalTable = table(basicTime.', sineWave.', noisySine.', linearRamp.', ...
+    'VariableNames', {'time', 'sine', 'noisy', 'ramp'});
+shortTable  = table((1:10).', (1:10).', 'VariableNames', {'shortX', 'shortY'});
+
+%% Struct arrays and nested content
+structArray(1).signal = sineWave;
+structArray(1).label  = 'clean';
+structArray(2).signal = noisySine;
+structArray(2).label  = 'noisy';
+nestedCells = {cellSignals, multiChannelMatrix; descriptions, channelNames};
 
 %% Frequency metadata and lookup helpers
 freqListHz   = [0.2, 1, 4, 8, 16];
