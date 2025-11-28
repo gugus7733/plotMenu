@@ -749,16 +749,6 @@ refreshWorkspaceControls();
 
     function tf = isContainerCandidate(metaEntry)
         tf = ismember(metaEntry.kind, {'struct', 'cell', 'table'});
-        if tf
-            return;
-        end
-
-        if strcmp(metaEntry.kind, 'array')
-            tf = numel(metaEntry.size) >= 2 && metaEntry.size(2) > 1;
-            return;
-        end
-
-        tf = false;
     end
 
     function txt = sizeToString(sz)
@@ -815,19 +805,18 @@ refreshWorkspaceControls();
         detailPanel.Layout.Column = 2;
 
         detailGrid = uigridlayout(detailPanel, [7 2]);
-        detailGrid.RowHeight   = {'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit'};
+        detailGrid.RowHeight   = {'fit', '1x', 'fit', 'fit', 'fit', 'fit', 'fit'};
         detailGrid.ColumnWidth = {150, '1x'};
 
         lblDetails = uilabel(detailGrid, 'Text', 'Select a variable to begin.', 'WordWrap', 'on');
         lblDetails.Layout.Row    = 1;
         lblDetails.Layout.Column = [1 2];
 
-        lblSubSelection = uilabel(detailGrid, 'Text', 'Field / column:', 'Visible', 'off');
-        lblSubSelection.Layout.Row    = 2;
-        lblSubSelection.Layout.Column = 1;
-        ddSubSelection = uidropdown(detailGrid, 'Items', {}, 'Visible', 'off');
-        ddSubSelection.Layout.Row    = 2;
-        ddSubSelection.Layout.Column = 2;
+        selectionTree = uitree(detailGrid, ...
+            'SelectionChangedFcn', @onTreeSelectionChanged, ...
+            'Visible', 'on');
+        selectionTree.Layout.Row    = 2;
+        selectionTree.Layout.Column = [1 2];
 
         lblIndexMode = uilabel(detailGrid, 'Text', 'Index mode:', 'Visible', 'off');
         lblIndexMode.Layout.Row    = 3;
@@ -836,11 +825,11 @@ refreshWorkspaceControls();
         ddIndexMode.Layout.Row    = 3;
         ddIndexMode.Layout.Column = 2;
 
-        lblIndexValue = uilabel(detailGrid, 'Text', 'Index value:', 'Visible', 'off');
+        lblIndexValue = uilabel(detailGrid, 'Text', 'Index / path:', 'Visible', 'off');
         lblIndexValue.Layout.Row    = 4;
         lblIndexValue.Layout.Column = 1;
-        edtIndexValue = uieditfield(detailGrid, 'numeric', ...
-            'Visible', 'off', 'Limits', [1 Inf], 'RoundFractionalValues', true, 'Value', 1);
+        edtIndexValue = uieditfield(detailGrid, 'text', ...
+            'Visible', 'off', 'Value', '');
         edtIndexValue.Layout.Row    = 4;
         edtIndexValue.Layout.Column = 2;
 
@@ -874,6 +863,7 @@ refreshWorkspaceControls();
         ddIndexVars.ItemsData = idxData;
 
         currentMeta = [];
+        currentNode = [];
 
         lstContainers.ValueChangedFcn = @onContainerChanged;
         ddIndexVars.ValueChangedFcn   = @onIndexVarChanged;
@@ -893,64 +883,194 @@ refreshWorkspaceControls();
             currentMeta = candidates(idx);
             lblDetails.Text = sprintf('%s (%s) size [%s]', currentMeta.name, currentMeta.class, sizeToString(currentMeta.size));
             resetSelectors();
+            buildTreeForMeta(currentMeta);
+        end
 
-            switch currentMeta.kind
+        function buildTreeForMeta(metaEntry)
+            delete(selectionTree.Children);
+            try
+                val = evalin('base', metaEntry.name);
+            catch ME
+                setStatus(sprintf('Cannot evaluate "%s": %s', metaEntry.name, ME.message), true);
+                return;
+            end
+
+            rootMeta = describeValue(metaEntry.name, val, metaEntry.name);
+            rootNode = uitreenode(selectionTree, 'Text', formatMeta(rootMeta), 'NodeData', rootMeta);
+            expandNode(rootNode, val);
+            selectionTree.SelectedNodes = rootNode;
+            onTreeSelectionChanged();
+        end
+
+        function meta = describeValue(expr, val, label)
+            if nargin < 3
+                label = expr;
+            end
+            meta = struct( ...
+                'expression', expr, ...
+                'label',      label, ...
+                'class',      class(val), ...
+                'size',       size(val), ...
+                'kind',       classifyValueKind(val), ...
+                'isSupportedArray', isSupportedArray(val));
+        end
+
+        function lbl = formatMeta(meta)
+            lbl = sprintf('%s (%s [%s])', meta.label, meta.kind, sizeToString(meta.size));
+        end
+
+        function expandNode(node, valOverride)
+            if isempty(node) || ~isvalid(node)
+                return;
+            end
+
+            meta = node.NodeData;
+            val  = [];
+            if nargin > 1
+                val = valOverride;
+            else
+                try
+                    val = evalin('base', meta.expression);
+                catch
+                    return;
+                end
+            end
+
+            delete(node.Children);
+            childMetas = enumerateChildren(meta, val);
+            for k = 1:numel(childMetas)
+                uitreenode(node, 'Text', formatMeta(childMetas(k)), 'NodeData', childMetas(k)); %#ok<AGROW>
+            end
+        end
+
+        function children = enumerateChildren(meta, val)
+            children = struct('expression',{},'label',{},'class',{},'size',{},'kind',{},'isSupportedArray',{});
+            maxItems = 30;
+
+            switch meta.kind
                 case 'table'
                     try
-                        tblVal = evalin('base', currentMeta.name);
-                        colNames = tblVal.Properties.VariableNames;
+                        colNames = val.Properties.VariableNames;
                     catch
                         colNames = {};
                     end
 
-                    ddSubSelection.Items    = colNames;
-                    ddSubSelection.Visible  = true;
-                    lblSubSelection.Visible = true;
-                    lblSubSelection.Text    = 'Column:';
-                    if ~isempty(colNames)
-                        ddSubSelection.Value = colNames{1};
-                        btnAddFromOther.Enable = 'on';
-                    else
-                        btnAddFromOther.Enable = 'off';
+                    for c = 1:numel(colNames)
+                        colName = colNames{c};
+                        try
+                            childVal = val.(colName);
+                        catch
+                            childVal = [];
+                        end
+                        childExpr = sprintf('%s.%s', meta.expression, colName);
+                        childLabel = sprintf('%s.%s', meta.label, colName);
+                        children(end+1) = describeValue(childExpr, childVal, childLabel); %#ok<AGROW>
                     end
 
                 case 'struct'
-                    fields = {};
-                    try
-                        stVal = evalin('base', currentMeta.name);
-                        fields = fieldnames(stVal);
-                    catch
+                    if numel(val) > 1
+                        idxCount = min(numel(val), maxItems);
+                        for idxLocal = 1:idxCount
+                            idxStr = indexToString(idxLocal, size(val), false);
+                            childExpr = sprintf('%s(%s)', meta.expression, idxStr);
+                            childLabel = sprintf('%s(%s)', meta.label, idxStr);
+                            try
+                                childVal = val(idxLocal);
+                            catch
+                                childVal = [];
+                            end
+                            children(end+1) = describeValue(childExpr, childVal, childLabel); %#ok<AGROW>
+                        end
+                    else
+                        fields = {};
+                        try
+                            fields = fieldnames(val);
+                        catch
+                        end
+                        for fIdx = 1:numel(fields)
+                            fieldName = fields{fIdx};
+                            childExpr = sprintf('%s.%s', meta.expression, fieldName);
+                            childLabel = sprintf('%s.%s', meta.label, fieldName);
+                            try
+                                childVal = val.(fieldName);
+                            catch
+                                childVal = [];
+                            end
+                            children(end+1) = describeValue(childExpr, childVal, childLabel); %#ok<AGROW>
+                        end
                     end
-
-                    ddSubSelection.Items    = fields;
-                    ddSubSelection.Visible  = true;
-                    lblSubSelection.Visible = true;
-                    lblSubSelection.Text    = 'Field:';
-                    btnAddFromOther.Enable  = ~isempty(fields);
-                    if ~isempty(fields)
-                        ddSubSelection.Value = fields{1};
-                    end
-
-                    showIndexControls(numel(currentMeta.size) > 1 && prod(currentMeta.size) > 1, false);
 
                 case 'cell'
-                    ddSubSelection.Visible  = false;
-                    lblSubSelection.Visible = false;
-                    showIndexControls(true, false);
-                    btnAddFromOther.Enable = 'on';
+                    idxCount = min(numel(val), maxItems);
+                    for idxLocal = 1:idxCount
+                        idxStr = indexToString(idxLocal, size(val), true);
+                        childExpr = sprintf('%s%s', meta.expression, idxStr);
+                        childLabel = sprintf('%s%s', meta.label, idxStr);
+                        try
+                            childVal = val{idxLocal};
+                        catch
+                            childVal = [];
+                        end
+                        children(end+1) = describeValue(childExpr, childVal, childLabel); %#ok<AGROW>
+                    end
+            end
+        end
 
+        function idxStr = indexToString(idxLocal, sz, useBraces)
+            if nargin < 3
+                useBraces = false;
+            end
+            subs = cell(1, numel(sz));
+            [subs{:}] = ind2sub(sz, idxLocal);
+            subStr = strjoin(arrayfun(@(s) sprintf('%d', s), [subs{:}], 'UniformOutput', false), ',');
+            if useBraces
+                idxStr = sprintf('{%s}', subStr);
+            else
+                idxStr = subStr;
+            end
+        end
+
+        function onTreeSelectionChanged(~, evt)
+            if nargin < 2 || isempty(evt)
+                evt = struct('SelectedNodes', selectionTree.SelectedNodes);
+            end
+
+            if isempty(evt.SelectedNodes)
+                btnAddFromOther.Enable = 'off';
+                return;
+            end
+
+            currentNode = evt.SelectedNodes(1);
+            currentMeta = currentNode.NodeData;
+
+            lblDetails.Text = formatMeta(currentMeta);
+            resetSelectors();
+            configureIndexControls(currentMeta);
+
+            if isContainerKind(currentMeta.kind)
+                expandNode(currentNode);
+            end
+
+            btnAddFromOther.Enable = ternary(currentMeta.isSupportedArray || isContainerKind(currentMeta.kind), 'on', 'off');
+        end
+
+        function tf = isContainerKind(kind)
+            tf = ismember(kind, {'cell', 'struct', 'table'});
+        end
+
+        function configureIndexControls(meta)
+            showIndexControls(false, false);
+
+            switch meta.kind
                 case 'array'
-                    ddSubSelection.Visible  = false;
-                    lblSubSelection.Visible = false;
-                    hasMultipleColumns = numel(currentMeta.size) >= 2 && currentMeta.size(2) > 1;
+                    hasMultipleColumns = numel(meta.size) >= 2 && meta.size(2) > 1;
                     showIndexControls(hasMultipleColumns, true);
                     if hasMultipleColumns
                         ddIndexMode.Items = {'Column', 'Row', 'Linear index'};
                         ddIndexMode.Value = 'Column';
-                        btnAddFromOther.Enable = 'on';
-                    else
-                        btnAddFromOther.Enable = 'off';
                     end
+                case {'cell', 'struct'}
+                    showIndexControls(true, false);
             end
         end
 
@@ -970,11 +1090,9 @@ refreshWorkspaceControls();
         function resetSelectors()
             btnAddFromOther.Enable = 'off';
             lblPopupStatus.Visible = 'off';
-            ddSubSelection.Visible = false;
-            lblSubSelection.Visible = false;
             showIndexControls(false, false);
             ddIndexVars.Value = '';
-            edtIndexValue.Value = 1;
+            edtIndexValue.Value = '';
         end
 
         function onIndexVarChanged(~, ~)
@@ -985,11 +1103,14 @@ refreshWorkspaceControls();
 
             match = find(strcmp(idxData, idxVarName), 1);
             if ~isempty(match) && match > 1
-                edtIndexValue.Value = integerVars(match-1).scalarValue;
+                edtIndexValue.Value = num2str(integerVars(match-1).scalarValue);
             end
         end
 
-        function idxStr = getIndexString()
+        function idxStr = getIndexString(kind)
+            if nargin < 1
+                kind = '';
+            end
             idxStr = '';
             idxVarName = ddIndexVars.Value;
             if ~isempty(idxVarName)
@@ -997,11 +1118,30 @@ refreshWorkspaceControls();
                 return;
             end
 
-            idxVal = edtIndexValue.Value;
-            if isempty(idxVal) || isnan(idxVal)
+            raw = strtrim(edtIndexValue.Value);
+            if isempty(raw)
                 return;
             end
-            idxStr = sprintf('%d', round(idxVal));
+
+            switch kind
+                case 'cell'
+                    idxStr = normalizeCellIndex(raw);
+                otherwise
+                    idxStr = raw;
+            end
+        end
+
+        function idxStr = normalizeCellIndex(raw)
+            cleaned = regexprep(raw, '^\{', '');
+            cleaned = regexprep(cleaned, '\}$', '');
+            parts = regexp(cleaned, '\s*,\s*', 'split');
+            parts = parts(~cellfun(@isempty, parts));
+            if isempty(parts)
+                idxStr = '';
+                return;
+            end
+
+            idxStr = strjoin(arrayfun(@(p) sprintf('{%s}', p{1}), parts, 'UniformOutput', false), '');
         end
 
         function setStatus(msg, isError)
@@ -1017,89 +1157,127 @@ refreshWorkspaceControls();
             end
         end
 
-        function [expr, label] = buildExpression()
+        function [expr, label, val, valMeta] = buildExpression()
             expr  = '';
             label = '';
+            val   = [];
+            valMeta = [];
             if isempty(currentMeta)
                 return;
             end
 
-            switch currentMeta.kind
-                case 'table'
-                    if isempty(ddSubSelection.Items)
-                        return;
-                    end
-                    colName = ddSubSelection.Value;
-                    expr  = sprintf('%s.%s', currentMeta.name, colName);
-                    label = expr;
+            baseExpr  = currentMeta.expression;
+            baseLabel = currentMeta.label;
 
+            switch currentMeta.kind
                 case 'struct'
-                    if isempty(ddSubSelection.Items)
-                        return;
-                    end
-                    fieldName = ddSubSelection.Value;
-                    if prod(currentMeta.size) > 1
-                        idxStr = getIndexString();
+                    if numel(currentMeta.size) > 1 && prod(currentMeta.size) > 1 && ~contains(baseExpr, '(')
+                        idxStr = getIndexString('struct');
                         if isempty(idxStr)
-                            setStatus('Provide a valid struct index.', true);
+                            setStatus('Provide a valid struct index or pick a child node.', true);
                             return;
                         end
-                        expr  = sprintf('%s(%s).%s', currentMeta.name, idxStr, fieldName);
-                        label = expr;
-                    else
-                        expr  = sprintf('%s.%s', currentMeta.name, fieldName);
-                        label = expr;
+                        baseExpr  = sprintf('%s(%s)', baseExpr, idxStr);
+                        baseLabel = sprintf('%s(%s)', baseLabel, idxStr);
                     end
+                    expr  = baseExpr;
+                    label = baseLabel;
 
                 case 'cell'
-                    idxStr = getIndexString();
+                    idxStr = getIndexString('cell');
                     if isempty(idxStr)
-                        setStatus('Provide a cell index to extract.', true);
+                        setStatus('Provide a cell index or nested path (e.g., 1,2).', true);
                         return;
                     end
-                    expr  = sprintf('%s{%s}', currentMeta.name, idxStr);
-                    label = sprintf('%s{%s}', currentMeta.name, idxStr);
+                    expr  = sprintf('%s%s', baseExpr, idxStr);
+                    label = sprintf('%s%s', baseLabel, idxStr);
 
                 case 'array'
-                    idxStr = getIndexString();
-                    if isempty(idxStr)
-                        setStatus('Provide an index for the array slice.', true);
-                        return;
-                    end
-                    if ddIndexMode.Visible
+                    expr  = baseExpr;
+                    label = baseLabel;
+                    idxStr = getIndexString('array');
+                    if ddIndexMode.Visible && ~isempty(idxStr)
                         switch ddIndexMode.Value
                             case 'Row'
-                                expr  = sprintf('%s(%s,:)', currentMeta.name, idxStr);
-                                label = sprintf('%s row %s', currentMeta.name, idxStr);
+                                expr  = sprintf('%s(%s,:)', baseExpr, idxStr);
+                                label = sprintf('%s row %s', baseLabel, idxStr);
                             case 'Column'
-                                expr  = sprintf('%s(:,%s)', currentMeta.name, idxStr);
-                                label = sprintf('%s(:,%s)', currentMeta.name, idxStr);
+                                expr  = sprintf('%s(:,%s)', baseExpr, idxStr);
+                                label = sprintf('%s(:,%s)', baseLabel, idxStr);
                             otherwise
-                                expr  = sprintf('%s(%s)', currentMeta.name, idxStr);
-                                label = sprintf('%s(%s)', currentMeta.name, idxStr);
+                                expr  = sprintf('%s(%s)', baseExpr, idxStr);
+                                label = sprintf('%s(%s)', baseLabel, idxStr);
                         end
-                    else
-                        expr  = currentMeta.name;
-                        label = currentMeta.name;
+                    elseif ~isempty(idxStr)
+                        expr  = sprintf('%s(%s)', baseExpr, idxStr);
+                        label = expr;
                     end
+
+                otherwise
+                    expr  = baseExpr;
+                    label = baseLabel;
             end
+
+            try
+                val = evalin('base', expr);
+            catch ME
+                setStatus(sprintf('Cannot evaluate "%s": %s', expr, ME.message), true);
+                expr  = '';
+                label = '';
+                return;
+            end
+
+            valMeta = describeValue(expr, val, label);
         end
 
         function onAddFromOther(~, ~)
-            [expr, label] = buildExpression();
+            [expr, label, candidateVal, valMeta] = buildExpression();
             if isempty(expr)
                 return;
             end
 
-            try
-                candidateVal = evalin('base', expr);
-            catch ME
-                setStatus(sprintf('Cannot evaluate "%s": %s', expr, ME.message), true);
+            if isempty(valMeta)
+                try
+                    candidateVal = evalin('base', expr);
+                    valMeta = describeValue(expr, candidateVal, label);
+                catch ME
+                    setStatus(sprintf('Cannot evaluate "%s": %s', expr, ME.message), true);
+                    return;
+                end
+            end
+
+            if isempty(candidateVal)
+                setStatus('Selected entry could not be evaluated.', true);
                 return;
             end
 
-            if ~isSupportedArray(candidateVal)
-                setStatus('Selected data is not a plottable array.', true);
+            if ~valMeta.isSupportedArray
+                if isContainerKind(valMeta.kind)
+                    if ~isempty(currentNode) && isvalid(currentNode) && ...
+                            isfield(currentNode.NodeData, 'expression') && ...
+                            strcmp(currentNode.NodeData.expression, valMeta.expression)
+                        expandNode(currentNode, candidateVal);
+                        selectionTree.SelectedNodes = currentNode;
+                    else
+                        targetParent = currentNode;
+                        if isempty(targetParent) || ~isvalid(targetParent)
+                            targetParent = selectionTree;
+                        end
+
+                        existingChild = findChildByExpression(targetParent, valMeta.expression);
+                        if isempty(existingChild)
+                            newNode = uitreenode(targetParent, 'Text', formatMeta(valMeta), 'NodeData', valMeta);
+                            expandNode(newNode, candidateVal);
+                            selectionTree.SelectedNodes = newNode;
+                        else
+                            expandNode(existingChild, candidateVal);
+                            selectionTree.SelectedNodes = existingChild;
+                        end
+                    end
+                    setStatus('Selection is a container; drill down to reach a plottable array.', true);
+                else
+                    setStatus('Selected data is not a plottable array.', true);
+                end
                 return;
             end
 
@@ -1112,9 +1290,24 @@ refreshWorkspaceControls();
             addCustomYItem(label, expr, numel(candidateVal(:)));
             updateYListForX();
             if ~isempty(lbYVar.ItemsData)
-                lbYVar.Value = lbYVar.ItemsData{end};
+                lbYVar.Value = {lbYVar.ItemsData{end}};
             end
             setStatus(sprintf('Added "%s" to Y list.', label), false);
+        end
+
+        function node = findChildByExpression(parentNode, expr)
+            node = [];
+            if isempty(parentNode) || ~isvalid(parentNode)
+                return;
+            end
+
+            for child = parentNode.Children.'
+                data = child.NodeData;
+                if isfield(data, 'expression') && strcmp(data.expression, expr)
+                    node = child;
+                    return;
+                end
+            end
         end
     end
 
@@ -1707,9 +1900,21 @@ refreshWorkspaceControls();
             return;
         end
 
-        dtByType  = findall(axHandle, 'Type', 'datatip');
-        dtByClass = findall(axHandle, '-class', 'matlab.graphics.datatip.DataTip');
+        figHandle = ancestor(axHandle, 'figure');
+        searchRoot = axHandle;
+        if ~isempty(figHandle) && isvalid(figHandle)
+            searchRoot = figHandle;
+        end
+
+        dtByType  = findall(searchRoot, 'Type', 'datatip');
+        dtByClass = findall(searchRoot, '-class', 'matlab.graphics.datatip.DataTip');
         dtObjects = unique([dtByType(:); dtByClass(:)], 'stable');
+
+        if isempty(dtObjects)
+            return;
+        end
+
+        dtObjects = dtObjects(arrayfun(@(dt) isequal(ancestor(getTarget(dt), 'axes'), axHandle), dtObjects));
     end
 
     function tgt = getTarget(dtObj)
