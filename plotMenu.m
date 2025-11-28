@@ -42,11 +42,11 @@ subplotPanel = uipanel(leftLayout, 'Title', 'Subplots', 'BackgroundColor', [1 1 
 subplotPanel.Layout.Row    = 1;
 subplotPanel.Layout.Column = 1;
 
-subplotLayout = uigridlayout(subplotPanel, [5 1]);
-subplotLayout.RowHeight   = {'fit', '1x', 'fit', 'fit', 'fit'};
+subplotLayout = uigridlayout(subplotPanel, [2 1]);
+subplotLayout.RowHeight   = {'fit', '1x'};
 subplotLayout.BackgroundColor = [1 1 1];
 
-defaultLayoutRowHeights = {'fit', '1x', 'fit', 'fit', 'fit'};
+defaultLayoutRowHeights = {'fit', '1x'};
 hiddenLayoutRowHeights  = defaultLayoutRowHeights;
 hiddenLayoutRowHeights{2} = 0;
 
@@ -69,24 +69,6 @@ tblLayout.Layout.Row    = 2;
 tblLayout.Layout.Column = 1;
 tblLayout.Visible       = 'off';
 tblLayout.Enable        = 'off';
-
-lblActiveSubplot = uilabel(subplotLayout, ...
-    'Text', 'Active subplot: (1,1)');
-lblActiveSubplot.Layout.Row    = 3;
-lblActiveSubplot.Layout.Column = 1;
-
-chkSubplotSuperpose = uicheckbox(subplotLayout, ...
-    'Text',  'Superpose in subplot', ...
-    'Value', false, ...
-    'ValueChangedFcn', @onSubplotSuperposeChanged);
-chkSubplotSuperpose.Layout.Row    = 4;
-chkSubplotSuperpose.Layout.Column = 1;
-
-btnClear = uibutton(subplotLayout, ...
-    'Text',          'Clear selected subplot', ...
-    'ButtonPushedFcn', @onClearPlot);
-btnClear.Layout.Row    = 5;
-btnClear.Layout.Column = 1;
 
 btnRefresh = uibutton(leftLayout, ...
     'Text',          'Refresh workspace variables', ...
@@ -136,7 +118,7 @@ rightPanel.Layout.Row    = 1;
 rightPanel.Layout.Column = 3;
 
 rightLayout = uigridlayout(rightPanel, [3 1]);
-rightLayout.RowHeight = {'1x', '1x', 'fit'};
+rightLayout.RowHeight = {'fit', 'fit', 'fit'};
 
 % Bottom panel: export button + status label
 bottomPanel = uipanel(rightLayout, 'BorderType', 'none');
@@ -147,13 +129,14 @@ bottomLayout = uigridlayout(bottomPanel, [1 1]);
 bottomLayout.ColumnWidth = {'1x'};
 
 % --- Line style panel ---
-linePanel = uipanel(rightLayout, 'Title', 'Line properties', 'BackgroundColor', [1 1 1]);
+linePanel = uipanel(rightLayout, 'Title', 'Line properties', 'BackgroundColor', [1 1 1], ...
+    'Scrollable', 'on');
 linePanel.Layout.Row    = 1;
 linePanel.Layout.Column = 1;
 
-lineLayout = uigridlayout(linePanel, [10 2]);
-lineLayout.RowHeight   = {20, 40, 20, 30, 30, 30, 20, 30, 30, '1x'};
-lineLayout.ColumnWidth = {80, '1x'};
+lineLayout = uigridlayout(linePanel, [9 3]);
+lineLayout.RowHeight   = {20, 40, 20, 30, 30, 30, 30, 30, '1x'};
+lineLayout.ColumnWidth = {80, '1x', 70};
 
 lblLines = uilabel(lineLayout, 'Text', 'Lines:');
 lblLines.Layout.Row    = 1;
@@ -192,55 +175,54 @@ lblWidth.Layout.Column = 1;
 
 sldLineWidth = uislider(lineLayout, ...
     'Limits', [0.1 10], ...
-    'MajorTicks', 0.1:0.9:10, ...
+    'MajorTicks', [], ...
+    'MinorTicks', [], ...
     'Value', 1.5, ...
-    'ValueChangedFcn', @onWidthSliderChanged);
+    'ValueChangedFcn', @onWidthSliderChanged, ...
+    'ValueChangingFcn', @(~, evt) applyLineWidth(evt.Value));
 sldLineWidth.Layout.Row    = 5;
 sldLineWidth.Layout.Column = 2;
-
-lblWidthValue = uilabel(lineLayout, 'Text', 'Width value:');
-lblWidthValue.Layout.Row    = 6;
-lblWidthValue.Layout.Column = 1;
 
 edtLineWidth = uieditfield(lineLayout, 'numeric', ...
     'Limits', [0.1 10], ...
     'Value', 1.5, ...
     'ValueChangedFcn', @onWidthEditChanged);
-edtLineWidth.Layout.Row    = 6;
-edtLineWidth.Layout.Column = 2;
+edtLineWidth.Layout.Row    = 5;
+edtLineWidth.Layout.Column = 3;
 
 lblStyle = uilabel(lineLayout, 'Text', 'Line style:');
-lblStyle.Layout.Row    = 7;
+lblStyle.Layout.Row    = 6;
 lblStyle.Layout.Column = 1;
 
 ddLineStyle = uidropdown(lineLayout, ...
     'Items', {'-', '--', ':', '-.'}, ...
     'Value', '-', ...
     'ValueChangedFcn', @onStyleChanged);
-ddLineStyle.Layout.Row    = 7;
+ddLineStyle.Layout.Row    = 6;
 ddLineStyle.Layout.Column = 2;
 
 chkLineLegend = uicheckbox(lineLayout, ...
     'Text', 'Show in legend', ...
     'Value', true, ...
     'ValueChangedFcn', @onLineLegendToggled);
-chkLineLegend.Layout.Row    = 8;
-chkLineLegend.Layout.Column = [1 2];
+chkLineLegend.Layout.Row    = 7;
+chkLineLegend.Layout.Column = [1 3];
 
 btnRemoveLine = uibutton(lineLayout, ...
     'Text', 'Remove selected line', ...
     'ButtonPushedFcn', @onRemoveLine);
-btnRemoveLine.Layout.Row    = 9;
-btnRemoveLine.Layout.Column = [1 2];
+btnRemoveLine.Layout.Row    = 8;
+btnRemoveLine.Layout.Column = [1 3];
 
 % --- Axes properties panel ---
-axesPanel = uipanel(rightLayout, 'Title', 'Axes properties', 'BackgroundColor', [1 1 1]);
+axesPanel = uipanel(rightLayout, 'Title', 'Axes properties', 'BackgroundColor', [1 1 1], ...
+    'Scrollable', 'on');
 axesPanel.Layout.Row    = 2;
 axesPanel.Layout.Column = 1;
 
-axesLayout = uigridlayout(axesPanel, [7 2]);
-axesLayout.RowHeight   = {20, 30, 20, 30, 20, 30, 30};
-axesLayout.ColumnWidth = {80, '1x'};
+axesLayout = uigridlayout(axesPanel, [9 2]);
+axesLayout.RowHeight   = {20, 30, 20, 30, 20, 30, 30, 30, '1x'};
+axesLayout.ColumnWidth = {100, '1x'};
 
 lblTitle = uilabel(axesLayout, 'Text', 'Title:');
 lblTitle.Layout.Row    = 1;
@@ -289,6 +271,24 @@ ddLegendLocation = uidropdown(axesLayout, ...
 ddLegendLocation.Layout.Row    = 5;
 ddLegendLocation.Layout.Column = 2;
 
+lblActiveSubplot = uilabel(axesLayout, ...
+    'Text', 'Active subplot: (1,1)');
+lblActiveSubplot.Layout.Row    = 6;
+lblActiveSubplot.Layout.Column = [1 2];
+
+chkSubplotSuperpose = uicheckbox(axesLayout, ...
+    'Text',  'Superpose in subplot', ...
+    'Value', false, ...
+    'ValueChangedFcn', @onSubplotSuperposeChanged);
+chkSubplotSuperpose.Layout.Row    = 7;
+chkSubplotSuperpose.Layout.Column = [1 2];
+
+btnClear = uibutton(axesLayout, ...
+    'Text',          'Clear selected subplot', ...
+    'ButtonPushedFcn', @onClearPlot);
+btnClear.Layout.Row    = 8;
+btnClear.Layout.Column = [1 2];
+
 % --- Export button ---
 btnExport = uibutton(bottomLayout, ...
     'Text',          'Export to MATLAB code', ...
@@ -324,7 +324,7 @@ refreshWorkspaceControls();
 
         defaultSubplot = struct( ...
             'axes',           [], ...
-            'lines',          struct('handle',{},'xName',{},'yName',{},'legend',{}), ...
+            'lines',          struct('handle',{},'xName',{},'yName',{},'legend',{},'datatips',{}), ...
             'superpose',      false, ...
             'legendVisible',  true, ...
             'legendLocation', 'best');
@@ -363,6 +363,9 @@ refreshWorkspaceControls();
             for ln = 1:numel(newSubplots(idx).lines)
                 if ~isfield(newSubplots(idx).lines(ln), 'legend')
                     newSubplots(idx).lines(ln).legend = true;
+                end
+                if ~isfield(newSubplots(idx).lines(ln), 'datatips')
+                    newSubplots(idx).lines(ln).datatips = zeros(0, 2);
                 end
             end
         end
@@ -501,7 +504,7 @@ refreshWorkspaceControls();
             cla(subplotInfo.axes);
         end
 
-        subplotInfo.lines = struct('handle',{},'xName',{},'yName',{},'legend',{});
+        subplotInfo.lines = struct('handle',{},'xName',{},'yName',{},'legend',{},'datatips',{});
         state.subplots(idx) = subplotInfo;
 
         if idx == state.activeSubplot
@@ -661,6 +664,7 @@ refreshWorkspaceControls();
             lineInfo.xName   = xName;
             lineInfo.yName   = yName;
             lineInfo.legend  = true;
+            lineInfo.datatips = zeros(0, 2);
 
             set(hLine.Annotation.LegendInformation, 'IconDisplayStyle', 'on');
 
@@ -1055,13 +1059,64 @@ refreshWorkspaceControls();
         catch
         end
 
+        dtHandle = [];
         try
             if ~isempty(tipPos) && numel(tipPos) >= 2
-                datatip(hLine, tipPos(1), tipPos(2));
+                dtHandle = datatip(hLine, tipPos(1), tipPos(2));
             else
-                datatip(hLine);
+                dtHandle = datatip(hLine);
             end
         catch
+        end
+
+        try
+            if ~isempty(dtHandle) && isvalid(dtHandle)
+                recordDatatipPosition(hLine, dtHandle.Position);
+            elseif ~isempty(tipPos)
+                recordDatatipPosition(hLine, tipPos);
+            end
+        catch
+        end
+    end
+
+    function recordDatatipPosition(hLine, pos)
+        if isempty(hLine) || ~isvalid(hLine) || numel(pos) < 2
+            return;
+        end
+
+        subplotIdx = findSubplotIndex(ancestor(hLine, 'axes'));
+        if subplotIdx == 0 || subplotIdx > numel(state.subplots)
+            return;
+        end
+
+        lines = state.subplots(subplotIdx).lines;
+        lineIdx = find(arrayfun(@(ln) isequal(ln.handle, hLine), lines), 1);
+        if isempty(lineIdx)
+            return;
+        end
+
+        if ~isfield(lines(lineIdx), 'datatips') || isempty(lines(lineIdx).datatips)
+            lines(lineIdx).datatips = zeros(0, 2);
+        end
+
+        pos = pos(:).';
+        lines(lineIdx).datatips(end+1, 1:2) = pos(1:2);
+        state.subplots(subplotIdx).lines = lines;
+    end
+
+    function tgt = getTarget(dtObj)
+        tgt = [];
+        if isempty(dtObj) || ~isvalid(dtObj)
+            return;
+        end
+
+        if isprop(dtObj, 'DataSource') && ~isempty(dtObj.DataSource)
+            tgt = dtObj.DataSource;
+            return;
+        end
+
+        if isprop(dtObj, 'Target') && ~isempty(dtObj.Target)
+            tgt = dtObj.Target;
         end
     end
 
@@ -1251,33 +1306,38 @@ refreshWorkspaceControls();
 
             codeLines{end+1} = 'grid(ax,''on'');';
 
-            dtObjects = findall(axLocal, 'Type', 'DataTip');
-            for dtIdx = 1:numel(dtObjects)
-                dtObj = dtObjects(dtIdx);
-                if ~isvalid(dtObj)
+            for dtIdx = 1:numel(subplotInfo.lines)
+                if dtIdx > numel(lineVarNames) || isempty(lineVarNames{dtIdx})
                     continue;
                 end
 
-                targetLine = [];
-                if isprop(dtObj, 'DataSource') && ~isempty(dtObj.DataSource)
-                    targetLine = dtObj.DataSource;
-                elseif isprop(dtObj, 'Target') && ~isempty(dtObj.Target)
-                    targetLine = dtObj.Target;
+                dtPositions = [];
+                if isfield(subplotInfo.lines(dtIdx), 'datatips')
+                    dtPositions = subplotInfo.lines(dtIdx).datatips;
                 end
-
-                lineIdx = find(arrayfun(@(ln) isequal(ln.handle, targetLine), subplotInfo.lines), 1);
-                if isempty(lineIdx) || lineIdx > numel(lineVarNames) || isempty(lineVarNames{lineIdx})
+                if isempty(dtPositions)
+                    dtObjects = findall(axLocal, '-class', 'matlab.graphics.datatip.DataTip');
+                    targetHandle = subplotInfo.lines(dtIdx).handle;
+                    dtPositions = cell2mat(arrayfun(@(dt) reshape(dt.Position(1, 1:2), 1, 2), ...
+                        dtObjects(arrayfun(@(dt) isequal(getTarget(dt), targetHandle), dtObjects)), ...
+                        'UniformOutput', false).');
+                    subplotInfo.lines(dtIdx).datatips = dtPositions;
+                    state.subplots(s) = subplotInfo;
+                end
+                if isempty(dtPositions)
                     continue;
                 end
 
-                pos = dtObj.Position;
-                if numel(pos) < 2
-                    continue;
-                end
+                for tipRow = 1:size(dtPositions, 1)
+                    pos = dtPositions(tipRow, :);
+                    if numel(pos) < 2
+                        continue;
+                    end
 
-                xTip = valueToLiteral(pos(1));
-                yTip = valueToLiteral(pos(2));
-                codeLines{end+1} = sprintf('datatip(%s, %s, %s);', lineVarNames{lineIdx}, xTip, yTip); %#ok<AGROW>
+                    xTip = valueToLiteral(pos(1));
+                    yTip = valueToLiteral(pos(2));
+                    codeLines{end+1} = sprintf('datatip(%s, %s, %s);', lineVarNames{dtIdx}, xTip, yTip); %#ok<AGROW>
+                end
             end
 
             codeLines{end+1} = '';
