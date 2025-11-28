@@ -10,8 +10,9 @@ clc;
 rng(0);
 
 %% Time bases
-basicTime = linspace(0, 2*pi, 250);   % uniform sampling
-slowTime  = linspace(0, 20, 500);      % longer window for slow trends
+basicTime = linspace(0, 2*pi, 250);   % uniform sampling (primary base)
+slowTime  = linspace(0, 8*pi, numel(basicTime)); % slow trends but aligned to base length
+baseTime  = basicTime;                % alias for readability when pairing signals
 
 %% Basic deterministic signals
 sineWave      = sin(2*pi*1.2*basicTime);
@@ -22,18 +23,26 @@ quadraticRise = (basicTime - mean(basicTime)).^2;
 
 %% Noisy, discontinuous, and extreme-value cases
 noisySine    = sineWave + 0.15 * randn(size(sineWave));
-stepSignal   = double(basicTime >= pi);
-impulseTrain = zeros(size(basicTime));
+stepSignal   = double(baseTime >= pi);
+impulseTrain = zeros(size(baseTime));
 impulseTrain(50:50:end) = 1;
 nanGapSignal = sineWave;
 nanGapSignal(80:120) = NaN;        % missing window for gap-handling checks
 largeSpikeSignal = sineWave;
 largeSpikeSignal(200) = 10;        % outlier to test axis scaling
 
-%% Alternative sampling and mixed units
-irregularTime = cumsum(0.01 + 0.01 * rand(1, 180));
+%% Alternative sampling and mixed units (aligned versions)
+irregularTime = cumsum(0.01 + 0.01 * rand(1, numel(baseTime)));
 chirpLike     = sin(2*pi*(0.2*irregularTime + 0.05*(irregularTime.^2)));
 unitLabels    = ["seconds", "volts", "degrees C"];
+
+% Clearly "bad" timebases for mismatch testing
+badTimeShort = linspace(0, 2*pi, 120);
+badTimeLong  = linspace(0, 4*pi, 400);
+badlyConditionedShort = 2 * mod(badTimeShort * 3 / (2*pi), 1) - 1; % sawtooth-like without toolbox
+badlyConditionedShort = badlyConditionedShort + 0.1 * randn(size(badTimeShort));
+badlyConditionedLong  = sin(0.6 * badTimeLong) + 0.5 * rand(size(badTimeLong));
+badlyConditionedLong(50:60) = NaN; % obvious artifact window
 
 %% Grouped data containers
 signalStruct = struct( ...

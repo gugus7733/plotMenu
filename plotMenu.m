@@ -12,6 +12,14 @@ function plotMenu
 %   - Change title, axis labels, legend presence/location.
 %   - Export MATLAB code that reproduces the figure using the variable names.
 
+% Close any other open plotMenu windows to keep a single instance active
+existingMenus = findall(0, 'Type', 'figure', '-and', {'Name', 'Plot Menu'});
+for k = 1:numel(existingMenus)
+    if isvalid(existingMenus(k))
+        delete(existingMenus(k));
+    end
+end
+
 % Shared state across nested callbacks
 state         = struct();
 statusTimer   = [];
@@ -134,8 +142,8 @@ linePanel = uipanel(rightLayout, 'Title', 'Line properties', 'BackgroundColor', 
 linePanel.Layout.Row    = 1;
 linePanel.Layout.Column = 1;
 
-lineLayout = uigridlayout(linePanel, [9 3]);
-lineLayout.RowHeight   = {20, 40, 20, 30, 30, 30, 30, 30, '1x'};
+lineLayout = uigridlayout(linePanel, [10 3]);
+lineLayout.RowHeight   = {20, 40, 20, 24, 30, 30, 30, 30, 30, '1x'};
 lineLayout.ColumnWidth = {80, '1x', 70};
 
 lblLines = uilabel(lineLayout, 'Text', 'Lines:');
@@ -157,20 +165,36 @@ edtLineName = uieditfield(lineLayout, 'text', ...
 edtLineName.Layout.Row    = 3;
 edtLineName.Layout.Column = 2;
 
+lblLineOrder = uilabel(lineLayout, 'Text', 'Plot order:');
+lblLineOrder.Layout.Row    = 4;
+lblLineOrder.Layout.Column = 1;
+
+btnLineOrderDown = uibutton(lineLayout, ...
+    'Text', '-', ...
+    'ButtonPushedFcn', @onMoveLineBackward);
+btnLineOrderDown.Layout.Row    = 4;
+btnLineOrderDown.Layout.Column = 2;
+
+btnLineOrderUp = uibutton(lineLayout, ...
+    'Text', '+', ...
+    'ButtonPushedFcn', @onMoveLineForward);
+btnLineOrderUp.Layout.Row    = 4;
+btnLineOrderUp.Layout.Column = 3;
+
 % Color controls: single clickable color bar
 lblColor = uilabel(lineLayout, 'Text', 'Color:');
-lblColor.Layout.Row    = 4;
+lblColor.Layout.Row    = 5;
 lblColor.Layout.Column = 1;
 
 btnColor = uibutton(lineLayout, ...
     'Text', '', ...
     'BackgroundColor', [0 0.4470 0.7410], ...
     'ButtonPushedFcn', @onPickColor);
-btnColor.Layout.Row    = 4;
+btnColor.Layout.Row    = 5;
 btnColor.Layout.Column = 2;
 
 lblWidth = uilabel(lineLayout, 'Text', 'Line width:');
-lblWidth.Layout.Row    = 5;
+lblWidth.Layout.Row    = 6;
 lblWidth.Layout.Column = 1;
 
 sldLineWidth = uislider(lineLayout, ...
@@ -180,38 +204,38 @@ sldLineWidth = uislider(lineLayout, ...
     'Value', 1.5, ...
     'ValueChangedFcn', @onWidthSliderChanged, ...
     'ValueChangingFcn', @(~, evt) applyLineWidth(evt.Value));
-sldLineWidth.Layout.Row    = 5;
+sldLineWidth.Layout.Row    = 6;
 sldLineWidth.Layout.Column = 2;
 
 edtLineWidth = uieditfield(lineLayout, 'numeric', ...
     'Limits', [0.1 10], ...
     'Value', 1.5, ...
     'ValueChangedFcn', @onWidthEditChanged);
-edtLineWidth.Layout.Row    = 5;
+edtLineWidth.Layout.Row    = 6;
 edtLineWidth.Layout.Column = 3;
 
 lblStyle = uilabel(lineLayout, 'Text', 'Line style:');
-lblStyle.Layout.Row    = 6;
+lblStyle.Layout.Row    = 7;
 lblStyle.Layout.Column = 1;
 
 ddLineStyle = uidropdown(lineLayout, ...
     'Items', {'-', '--', ':', '-.'}, ...
     'Value', '-', ...
     'ValueChangedFcn', @onStyleChanged);
-ddLineStyle.Layout.Row    = 6;
+ddLineStyle.Layout.Row    = 7;
 ddLineStyle.Layout.Column = 2;
 
 chkLineLegend = uicheckbox(lineLayout, ...
     'Text', 'Show in legend', ...
     'Value', true, ...
     'ValueChangedFcn', @onLineLegendToggled);
-chkLineLegend.Layout.Row    = 7;
+chkLineLegend.Layout.Row    = 8;
 chkLineLegend.Layout.Column = [1 3];
 
 btnRemoveLine = uibutton(lineLayout, ...
     'Text', 'Remove selected line', ...
     'ButtonPushedFcn', @onRemoveLine);
-btnRemoveLine.Layout.Row    = 8;
+btnRemoveLine.Layout.Row    = 9;
 btnRemoveLine.Layout.Column = [1 3];
 
 % --- Axes properties panel ---
@@ -826,6 +850,42 @@ refreshWorkspaceControls();
         updateLegend();
     end
 
+    function onMoveLineBackward(~, ~)
+        adjustLineOrder(-1);
+    end
+
+    function onMoveLineForward(~, ~)
+        adjustLineOrder(1);
+    end
+
+    function adjustLineOrder(step)
+        idx = getSelectedLineIndex();
+        lines = getCurrentLines();
+        if idx == 0 || isempty(lines)
+            return;
+        end
+
+        newIdx = min(max(idx + step, 1), numel(lines));
+        if newIdx == idx
+            return;
+        end
+
+        hLine = lines(idx).handle;
+        lines([idx, newIdx]) = lines([newIdx, idx]);
+        setCurrentLines(lines);
+
+        if isvalid(hLine)
+            direction = ternary(step > 0, 'up', 'down');
+            try
+                uistack(hLine, direction, abs(newIdx - idx));
+            catch
+            end
+        end
+
+        refreshLineListFromSubplot(hLine);
+        updateLegend();
+    end
+
     function onRemoveLine(~, ~)
         subplotIdx = state.activeSubplot;
         if isempty(state.subplots) || subplotIdx < 1 || subplotIdx > numel(state.subplots)
@@ -1120,6 +1180,44 @@ refreshWorkspaceControls();
         end
     end
 
+    function syncDatatipsFromAxes(subplotIdx)
+        if subplotIdx < 1 || subplotIdx > numel(state.subplots)
+            return;
+        end
+
+        subplotInfo = state.subplots(subplotIdx);
+        axLocal = subplotInfo.axes;
+        if isempty(axLocal) || ~isvalid(axLocal)
+            return;
+        end
+
+        for lnIdx = 1:numel(subplotInfo.lines)
+            subplotInfo.lines(lnIdx).datatips = zeros(0, 2);
+        end
+
+        dtObjects = findall(axLocal, '-class', 'matlab.graphics.datatip.DataTip');
+        for dt = dtObjects.'
+            tgt = getTarget(dt);
+            if isempty(tgt)
+                continue;
+            end
+
+            lineIdx = find(arrayfun(@(ln) isequal(ln.handle, tgt), subplotInfo.lines), 1);
+            if isempty(lineIdx)
+                continue;
+            end
+
+            pos = dt.Position;
+            if numel(pos) < 2
+                continue;
+            end
+
+            subplotInfo.lines(lineIdx).datatips(end+1, 1:2) = pos(1:2);
+        end
+
+        state.subplots(subplotIdx) = subplotInfo;
+    end
+
     function wireAxesInteractivity(axHandle)
         if isempty(axHandle) || ~isvalid(axHandle)
             return;
@@ -1239,6 +1337,9 @@ refreshWorkspaceControls();
             if isempty(subplotInfo.lines)
                 continue;
             end
+
+            syncDatatipsFromAxes(s);
+            subplotInfo = state.subplots(s);
 
             codeLines{end+1} = sprintf('ax = nexttile(tiled, %d); hold(ax,''on'');', s); %#ok<AGROW>
 
