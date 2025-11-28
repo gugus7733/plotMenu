@@ -2,6 +2,9 @@
 % The script seeds the base workspace with a wide range of sample signals,
 % containers, and labels for manual testing. Extend any section to add new
 % cases without changing the rest of the file.
+close all;
+clear;
+clc;
 
 %% Reproducible random seed
 rng(0);
