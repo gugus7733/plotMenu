@@ -490,6 +490,39 @@ refreshWorkspaceControls();
 
 %% --- Nested helper and callback functions ---
 
+    function setStatus(msg, isError)
+        if nargin < 2
+            isError = false;
+        end
+
+        lblStatus.Text    = msg;
+        lblStatus.Visible = 'on';
+        if isError
+            lblStatus.BackgroundColor = [0.8 0 0];
+            lblStatus.FontColor = [1 1 1];
+        else
+            lblStatus.BackgroundColor = [0 0 0];
+            lblStatus.FontColor = [1 1 1];
+        end
+
+        figPos      = fig.Position;
+        toastWidth  = min(360, figPos(3) - 20);
+        toastWidth  = max(toastWidth, 200);
+        toastHeight = 24;
+        lblStatus.Position = [ (figPos(3) - toastWidth) / 2, 10, toastWidth, toastHeight ];
+
+        if ~isempty(statusTimer) && isvalid(statusTimer)
+            stop(statusTimer);
+            delete(statusTimer);
+        end
+
+        statusTimer = timer( ...
+            'StartDelay',    3, ...
+            'ExecutionMode', 'singleShot', ...
+            'TimerFcn',      @(~, ~) set(lblStatus, 'Visible', 'off'));
+        start(statusTimer);
+    end
+
     function applySubplotGrid(rows, cols)
         % Create or resize the subplot grid based on a table-like selection
         rows = max(1, rows);
@@ -1987,7 +2020,7 @@ refreshWorkspaceControls();
             try
                 val = evalin('base', metaEntry.name);
             catch ME
-                setStatus(sprintf('Cannot evaluate "%s": %s', metaEntry.name, ME.message), true);
+                setPopupStatus(sprintf('Cannot evaluate "%s": %s', metaEntry.name, ME.message), true);
                 return;
             end
 
@@ -2219,7 +2252,7 @@ refreshWorkspaceControls();
             idxStr = strjoin(arrayfun(@(p) sprintf('{%s}', p{1}), parts, 'UniformOutput', false), '');
         end
 
-        function setStatus(msg, isError)
+        function setPopupStatus(msg, isError)
             if nargin < 2
                 isError = false;
             end
@@ -2249,7 +2282,7 @@ refreshWorkspaceControls();
                     if numel(currentMeta.size) > 1 && prod(currentMeta.size) > 1 && ~contains(baseExpr, '(')
                         idxStr = getIndexString('struct');
                         if isempty(idxStr)
-                            setStatus('Provide a valid struct index or pick a child node.', true);
+                            setPopupStatus('Provide a valid struct index or pick a child node.', true);
                             return;
                         end
                         baseExpr  = sprintf('%s(%s)', baseExpr, idxStr);
@@ -2261,7 +2294,7 @@ refreshWorkspaceControls();
                 case 'cell'
                     idxStr = getIndexString('cell');
                     if isempty(idxStr)
-                        setStatus('Provide a cell index or nested path (e.g., 1,2).', true);
+                        setPopupStatus('Provide a cell index or nested path (e.g., 1,2).', true);
                         return;
                     end
                     expr  = sprintf('%s%s', baseExpr, idxStr);
@@ -2296,7 +2329,7 @@ refreshWorkspaceControls();
             try
                 val = evalin('base', expr);
             catch ME
-                setStatus(sprintf('Cannot evaluate "%s": %s', expr, ME.message), true);
+                setPopupStatus(sprintf('Cannot evaluate "%s": %s', expr, ME.message), true);
                 expr  = '';
                 label = '';
                 return;
@@ -2316,13 +2349,13 @@ refreshWorkspaceControls();
                     candidateVal = evalin('base', expr);
                     valMeta = describeValue(expr, candidateVal, label);
                 catch ME
-                    setStatus(sprintf('Cannot evaluate "%s": %s', expr, ME.message), true);
+                    setPopupStatus(sprintf('Cannot evaluate "%s": %s', expr, ME.message), true);
                     return;
                 end
             end
 
             if isempty(candidateVal)
-                setStatus('Selected entry could not be evaluated.', true);
+                setPopupStatus('Selected entry could not be evaluated.', true);
                 return;
             end
 
@@ -2349,15 +2382,15 @@ refreshWorkspaceControls();
                             selectionTree.SelectedNodes = existingChild;
                         end
                     end
-                    setStatus('Selection is a container; drill down to reach a plottable array.', true);
+                    setPopupStatus('Selection is a container; drill down to reach a plottable array.', true);
                 else
-                    setStatus('Selected data is not a plottable array.', true);
+                    setPopupStatus('Selected data is not a plottable array.', true);
                 end
                 return;
             end
 
             if ~isempty(xLenLocal) && ~isLengthCompatible(size(candidateVal), xLenLocal)
-                setStatus(sprintf(['Length mismatch: X has %d elements but no dimension of the selection matches ' ...
+                setPopupStatus(sprintf(['Length mismatch: X has %d elements but no dimension of the selection matches ' ...
                     '(%s).'], xLenLocal, sizeToString(size(candidateVal))), true);
                 return;
             end
@@ -2367,7 +2400,7 @@ refreshWorkspaceControls();
             if ~isempty(lbYVar.ItemsData)
                 lbYVar.Value = {lbYVar.ItemsData{end}};
             end
-            setStatus(sprintf('Added "%s" to Y list.', label), false);
+            setPopupStatus(sprintf('Added "%s" to Y list.', label), false);
         end
 
         function node = findChildByExpression(parentNode, expr)
@@ -3503,18 +3536,26 @@ refreshWorkspaceControls();
 
         dtByType  = findall(searchRoot, 'Type', 'datatip');
         dtByClass = findall(searchRoot, '-class', 'matlab.graphics.datatip.DataTip');
-        dtObjects = unique([dtByType(:); dtByClass(:)], 'stable');
+        dtByIndex = findall(searchRoot, '-property', 'DataIndex');
+        dtObjects = unique([dtByType(:); dtByClass(:); dtByIndex(:)], 'stable');
+        dtObjects = dtObjects(isgraphics(dtObjects));
 
         if isempty(dtObjects)
+            dtObjects = gobjects(0, 1);
             return;
         end
 
-        dtObjects = dtObjects(arrayfun(@(dt) isequal(ancestor(getTarget(dt), 'axes'), axHandle), dtObjects));
+        dtObjects = dtObjects(arrayfun(@(dt) isDatatipOnAxes(dt, axHandle), dtObjects));
     end
 
     function tgt = getTarget(dtObj)
         tgt = [];
         if isempty(dtObj) || ~isvalid(dtObj)
+            return;
+        end
+
+        if isprop(dtObj, 'Host') && ~isempty(dtObj.Host)
+            tgt = dtObj.Host;
             return;
         end
 
@@ -3526,6 +3567,21 @@ refreshWorkspaceControls();
         if isprop(dtObj, 'Target') && ~isempty(dtObj.Target)
             tgt = dtObj.Target;
         end
+    end
+
+    function tf = isDatatipOnAxes(dtObj, axHandle)
+        tf = false;
+        if isempty(dtObj) || ~isvalid(dtObj) || isempty(axHandle) || ~isvalid(axHandle)
+            return;
+        end
+
+        tgt = getTarget(dtObj);
+        if isempty(tgt) || ~isvalid(tgt)
+            return;
+        end
+
+        targetAxes = ancestor(tgt, 'axes');
+        tf = isequal(targetAxes, axHandle);
     end
 
     function syncDatatipsFromAxes(subplotIdx)
@@ -3885,28 +3941,7 @@ refreshWorkspaceControls();
         try
             clipboard('copy', codeStr);
 
-            % Show transient status text as a bottom-centered popup
-            lblStatus.Text = 'graph generation code copied to clipboard';
-
-            figPos      = fig.Position;
-            toastWidth  = 320;
-            toastHeight = 24;
-            lblStatus.Position = [ (figPos(3) - toastWidth) / 2, ...
-                10, ...
-                toastWidth, ...
-                toastHeight ];
-            lblStatus.Visible = 'on';
-
-            if ~isempty(statusTimer) && isvalid(statusTimer)
-                stop(statusTimer);
-                delete(statusTimer);
-            end
-
-            statusTimer = timer( ...
-                'StartDelay',    2, ...
-                'ExecutionMode', 'singleShot', ...
-                'TimerFcn',      @(~, ~) set(lblStatus, 'Visible', 'off'));
-            start(statusTimer);
+            setStatus('graph generation code copied to clipboard', false);
         catch
             % In case of failure, remain silent to avoid intrusive dialogs
         end
