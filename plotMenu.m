@@ -21,15 +21,17 @@ for k = 1:numel(existingMenus)
 end
 
 % Shared state across nested callbacks
-state         = struct();
-statusTimer   = [];
+state          = struct();
+statusTimer    = [];
 state.subplots = struct('axes',{},'lines',{},'superpose',{},'legendVisible',{},'legendLocation',{}, ...
-    'axisEqual',{},'xTickSpacing',{},'yTickSpacing',{},'xScale',{},'yScale',{},'limitListeners',{});
+    'axisEqual',{},'xTickSpacing',{},'yTickSpacing',{},'xScale',{},'yScale',{},'limitListeners',{}, ...
+    'titleText',{},'xLabelText',{},'yLabelText',{},'xLim',{},'yLim',{});
 state.subplotRows = 1;
 state.subplotCols = 1;
 state.activeSubplot = 1;
-state.workspaceMeta = struct('name',{},'class',{},'size',{},'isSupportedArray',{},'numel',{},'isIntegerScalar',{},'kind',{},'scalarValue',{});
+state.workspaceMeta = struct('name',{},'class',{},'size',{},'isSupportedArray',{},'numel',{},'isIntegerScalar',{},'kind',{},'scalarValue',{},'isNumeric',{},'isValidXCandidate',{});
 state.customYItems  = struct('label',{},'expression',{},'dimSizes',{});
+state.datatipMode   = false;
 
 %% Create main UI
 fig = uifigure( ...
@@ -54,32 +56,19 @@ subplotPanel.Layout.Row    = 1;
 subplotPanel.Layout.Column = 1;
 
 subplotLayout = uigridlayout(subplotPanel, [2 1]);
-subplotLayout.RowHeight   = {'fit', '1x'};
+subplotLayout.RowHeight   = {'fit', 'fit'};
 subplotLayout.BackgroundColor = [1 1 1];
-
-defaultLayoutRowHeights = {'fit', '1x'};
-hiddenLayoutRowHeights  = defaultLayoutRowHeights;
-hiddenLayoutRowHeights{2} = 0;
-
-subplotLayout.RowHeight = hiddenLayoutRowHeights;
 
 btnLayoutMenu = uibutton(subplotLayout, ...
     'Text', 'Choose layout', ...
     'ButtonPushedFcn', @onLayoutMenuPressed);
 btnLayoutMenu.Layout.Row    = 1;
 btnLayoutMenu.Layout.Column = 1;
-
-tblLayout = uitable(subplotLayout, ...
-    'Data', strings(5), ...
-    'RowName', {}, ...
-    'ColumnName', {}, ...
-    'Multiselect', 'off', ...
-    'CellSelectionCallback', @onLayoutCellSelected, ...
-    'ColumnWidth', num2cell(repmat(26, 1, 5)));
-tblLayout.Layout.Row    = 2;
-tblLayout.Layout.Column = 1;
-tblLayout.Visible       = 'off';
-tblLayout.Enable        = 'off';
+lblLayoutSummary = uilabel(subplotLayout, ...
+    'Text', 'Layout: 1 x 1', ...
+    'HorizontalAlignment', 'center');
+lblLayoutSummary.Layout.Row    = 2;
+lblLayoutSummary.Layout.Column = 1;
 
 btnRefresh = uibutton(leftLayout, ...
     'Text',          'Refresh workspace variables', ...
@@ -158,8 +147,8 @@ linePanel = uipanel(rightLayout, 'Title', 'Line properties', 'BackgroundColor', 
 linePanel.Layout.Row    = 1;
 linePanel.Layout.Column = 1;
 
-lineLayout = uigridlayout(linePanel, [13 3]);
-lineLayout.RowHeight   = {20, 40, 20, 24, 30, 30, 30, 30, 24, 30, 30, 30, '1x'};
+lineLayout = uigridlayout(linePanel, [14 3]);
+lineLayout.RowHeight   = {20, 40, 20, 24, 30, 30, 30, 30, 24, 30, 30, 30, 30, '1x'};
 lineLayout.ColumnWidth = {80, '1x', '1x'};
 
 lblLines = uilabel(lineLayout, 'Text', 'Lines:');
@@ -287,10 +276,16 @@ btnPresetRad2Deg = uibutton(lineLayout, ...
 btnPresetRad2Deg.Layout.Row    = 11;
 btnPresetRad2Deg.Layout.Column = 3;
 
+tbtnDatatipMode = uitogglebutton(lineLayout, ...
+    'Text', 'Datatip mode (off)', ...
+    'ValueChangedFcn', @onDatatipModeToggled);
+tbtnDatatipMode.Layout.Row    = 12;
+tbtnDatatipMode.Layout.Column = [1 3];
+
 btnRemoveLine = uibutton(lineLayout, ...
     'Text', 'Remove selected line', ...
     'ButtonPushedFcn', @onRemoveLine);
-btnRemoveLine.Layout.Row    = 12;
+btnRemoveLine.Layout.Row    = 13;
 btnRemoveLine.Layout.Column = [1 3];
 
 % --- Axes properties panel ---
@@ -478,7 +473,7 @@ refreshWorkspaceControls();
 
         defaultSubplot = struct( ...
             'axes',           [], ...
-            'lines',          struct('handle',{},'xName',{},'yName',{},'legend',{},'datatips',{},'xData',{},'yData',{},'gain',{},'offset',{}), ...
+            'lines',          struct('handle',{},'xName',{},'yName',{},'legend',{},'datatips',{},'xData',{},'yData',{},'gain',{},'offset',{},'color',{},'lineStyle',{},'lineWidth',{},'displayName',{}), ...
             'superpose',      false, ...
             'legendVisible',  true, ...
             'legendLocation', 'best', ...
@@ -487,71 +482,227 @@ refreshWorkspaceControls();
             'yTickSpacing',   [], ...
             'xScale',         'linear', ...
             'yScale',         'linear', ...
-            'limitListeners', event.listener.empty);
-        newSubplots = repmat(defaultSubplot, 1, newCount);
+            'limitListeners', event.listener.empty, ...
+            'titleText',      '', ...
+            'xLabelText',     '', ...
+            'yLabelText',     '', ...
+            'xLim',           [], ...
+            'yLim',           []);
 
-        for idx = 1:newCount
+        targetLength = max(newCount, numel(oldSubplots));
+        if isempty(oldSubplots)
+            oldSubplots = repmat(defaultSubplot, 1, targetLength);
+        elseif numel(oldSubplots) < targetLength
+            oldSubplots(end+1:targetLength) = repmat(defaultSubplot, 1, targetLength - numel(oldSubplots));
+        end
+
+        for idx = 1:numel(oldSubplots)
+            state.subplots(idx) = ensureSubplotStruct(oldSubplots(idx));
+            captureSubplotState(idx);
+        end
+
+        for idx = 1:targetLength
+            subplotInfo = ensureSubplotStruct(state.subplots(idx));
             rIdx = ceil(idx / cols);
             cIdx = mod(idx-1, cols) + 1;
 
-            if idx <= numel(oldSubplots) && isfield(oldSubplots(idx), 'axes') && ...
-                    isvalid(oldSubplots(idx).axes)
-                axLocal = oldSubplots(idx).axes;
-                axLocal.Layout.Row    = rIdx;
-                axLocal.Layout.Column = cIdx;
-                newSubplots(idx) = oldSubplots(idx);
+            if idx <= newCount
+                if isempty(subplotInfo.axes) || ~isvalid(subplotInfo.axes)
+                    axLocal = uiaxes(centerLayout);
+                    axLocal.Layout.Row    = rIdx;
+                    axLocal.Layout.Column = cIdx;
+                    grid(axLocal, 'on');
+                    title(axLocal, subplotInfo.titleText);
+                    xlabel(axLocal, subplotInfo.xLabelText);
+                    ylabel(axLocal, subplotInfo.yLabelText);
+                    axLocal.Color = [1 1 1];
+                    subplotInfo.axes = axLocal;
+                    redrawSubplotContent(idx, subplotInfo);
+                else
+                    subplotInfo.axes.Layout.Row    = rIdx;
+                    subplotInfo.axes.Layout.Column = cIdx;
+                    subplotInfo.axes.Visible       = 'on';
+                end
+
+                wireAxesInteractivity(subplotInfo.axes);
+                ensureLineInteractivity(subplotInfo.lines);
+                attachLimitListeners(subplotInfo.axes, idx);
+                applyAxesConfig(idx);
+                applyAxesTextFromState(idx);
+                restoreLineDatatips(idx);
             else
-                axLocal = uiaxes(centerLayout);
-                axLocal.Layout.Row    = rIdx;
-                axLocal.Layout.Column = cIdx;
-                grid(axLocal, 'on');
-                title(axLocal, '');
-                xlabel(axLocal, '');
-                ylabel(axLocal, '');
-                axLocal.Color = [1 1 1];
-
-                newSubplots(idx).axes           = axLocal;
-                newSubplots(idx).superpose      = false;
-                newSubplots(idx).legendVisible  = true;
-                newSubplots(idx).legendLocation = ddLegendLocation.Value;
+                subplotInfo = captureSubplotState(idx);
+                if isfield(subplotInfo, 'axes') && isvalid(subplotInfo.axes)
+                    delete(subplotInfo.axes);
+                end
+                if isfield(subplotInfo, 'limitListeners') && ~isempty(subplotInfo.limitListeners)
+                    try
+                        delete(subplotInfo.limitListeners(isvalid(subplotInfo.limitListeners)));
+                    catch
+                    end
+                end
+                subplotInfo.axes = [];
+                subplotInfo.limitListeners = event.listener.empty;
             end
 
-            wireAxesInteractivity(axLocal);
-            ensureLineInteractivity(newSubplots(idx).lines);
-
-            % Ensure line structs carry legend flag
-            for ln = 1:numel(newSubplots(idx).lines)
-                if ~isfield(newSubplots(idx).lines(ln), 'legend')
-                    newSubplots(idx).lines(ln).legend = true;
-                end
-                if ~isfield(newSubplots(idx).lines(ln), 'datatips')
-                    newSubplots(idx).lines(ln).datatips = zeros(0, 2);
-                end
-            end
-
-            newSubplots(idx) = ensureSubplotStruct(newSubplots(idx));
-            attachLimitListeners(axLocal, idx);
-            applyAxesConfig(idx);
+            state.subplots(idx) = subplotInfo;
         end
 
-        for idx = newCount+1:numel(oldSubplots)
-            if isfield(oldSubplots(idx), 'axes') && isvalid(oldSubplots(idx).axes)
-                delete(oldSubplots(idx).axes);
+        state.subplotRows   = rows;
+        state.subplotCols   = cols;
+        state.activeSubplot = min(state.activeSubplot, newCount);
+        lblLayoutSummary.Text = sprintf('Layout: %d x %d', rows, cols);
+
+        setActiveSubplot(state.activeSubplot);
+    end
+
+    function subplotInfo = captureSubplotState(idx)
+        subplotInfo = ensureSubplotStruct(state.subplots(idx));
+        axLocal = subplotInfo.axes;
+        if ~isempty(axLocal) && isvalid(axLocal)
+            subplotInfo.titleText  = axLocal.Title.String;
+            subplotInfo.xLabelText = axLocal.XLabel.String;
+            subplotInfo.yLabelText = axLocal.YLabel.String;
+            subplotInfo.xLim       = axLocal.XLim;
+            subplotInfo.yLim       = axLocal.YLim;
+            syncDatatipsFromAxes(idx);
+            subplotInfo = ensureSubplotStruct(state.subplots(idx));
+        end
+
+        subplotInfo.lines = captureLineState(subplotInfo.lines);
+        state.subplots(idx) = subplotInfo;
+    end
+
+    function lines = captureLineState(lines)
+        if isempty(lines)
+            lines = ensureLineDefaults(lines);
+            return;
+        end
+        for ln = 1:numel(lines)
+            if isfield(lines(ln), 'handle') && isvalid(lines(ln).handle)
+                lines(ln).color       = safeGetLineColor(lines(ln).handle);
+                lines(ln).lineStyle   = safeGetLineStyle(lines(ln).handle);
+                lines(ln).lineWidth   = safeGetLineWidth(lines(ln).handle);
+                lines(ln).displayName = safeGetDisplayName(lines(ln).handle, lines(ln).yName);
+                legendInfo = lines(ln).handle.Annotation.LegendInformation;
+                lines(ln).legend = strcmp(legendInfo.IconDisplayStyle, 'on');
+                lines(ln).xData  = safeGetLineData(lines(ln).handle, 'XData');
+                lines(ln).yData  = safeGetLineData(lines(ln).handle, 'YData');
             end
-            if isfield(oldSubplots(idx), 'limitListeners') && ~isempty(oldSubplots(idx).limitListeners)
+            lines(ln).datatips = ensureLineDefaults(lines(ln)).datatips;
+        end
+    end
+
+    function redrawSubplotContent(idx, subplotInfo)
+        if nargin < 2
+            subplotInfo = ensureSubplotStruct(state.subplots(idx));
+        end
+        axLocal = subplotInfo.axes;
+        if isempty(axLocal) || ~isvalid(axLocal)
+            return;
+        end
+
+        cla(axLocal);
+        hold(axLocal, 'on');
+        for ln = 1:numel(subplotInfo.lines)
+            lnInfo = ensureLineDefaults(subplotInfo.lines(ln));
+            if isempty(lnInfo.xData) || isempty(lnInfo.yData)
+                continue;
+            end
+
+            hLine = plot(axLocal, lnInfo.xData, lnInfo.yData, ...
+                'LineWidth', lnInfo.lineWidth, ...
+                'LineStyle', lnInfo.lineStyle, ...
+                'Color',     lnInfo.color, ...
+                'DisplayName', lnInfo.displayName);
+            subplotInfo.lines(ln).handle = hLine;
+            wireLineInteractivity(hLine);
+
+            try
+                set(hLine.Annotation.LegendInformation, 'IconDisplayStyle', ternary(lnInfo.legend, 'on', 'off'));
+            catch
+            end
+        end
+        hold(axLocal, 'off');
+
+        state.subplots(idx) = subplotInfo;
+        applyLineTransformsForSubplot(idx);
+        applyAxesTextFromState(idx);
+        applyAxesConfig(idx);
+        updateLegend(axLocal);
+    end
+
+    function applyAxesTextFromState(idx)
+        if idx < 1 || idx > numel(state.subplots)
+            return;
+        end
+        subplotInfo = ensureSubplotStruct(state.subplots(idx));
+        axLocal = subplotInfo.axes;
+        if isempty(axLocal) || ~isvalid(axLocal)
+            return;
+        end
+
+        title(axLocal, subplotInfo.titleText);
+        xlabel(axLocal, subplotInfo.xLabelText);
+        ylabel(axLocal, subplotInfo.yLabelText);
+
+        if ~isempty(subplotInfo.xLim)
+            try
+                axLocal.XLim = subplotInfo.xLim;
+            catch
+            end
+        end
+        if ~isempty(subplotInfo.yLim)
+            try
+                axLocal.YLim = subplotInfo.yLim;
+            catch
+            end
+        end
+    end
+
+    function restoreLineDatatips(idx)
+        if idx < 1 || idx > numel(state.subplots)
+            return;
+        end
+        subplotInfo = ensureSubplotStruct(state.subplots(idx));
+        axLocal = subplotInfo.axes;
+        if isempty(axLocal) || ~isvalid(axLocal)
+            return;
+        end
+
+        try
+            delete(findDatatipObjects(axLocal));
+        catch
+        end
+
+        for ln = 1:numel(subplotInfo.lines)
+            lnInfo = ensureLineDefaults(subplotInfo.lines(ln));
+            if isempty(lnInfo.datatips)
+                continue;
+            end
+            hLine = lnInfo.handle;
+            if isempty(hLine) || ~isvalid(hLine)
+                continue;
+            end
+            for tipIdx = 1:numel(lnInfo.datatips)
+                dt = lnInfo.datatips(tipIdx);
+                if ~isempty(dt.dataIndex) && isfinite(dt.dataIndex)
+                    try
+                        datatip(hLine, 'DataIndex', dt.dataIndex);
+                        continue;
+                    catch
+                    end
+                end
+                pos = dt.position;
+                if numel(pos) < 2
+                    continue;
+                end
                 try
-                    delete(oldSubplots(idx).limitListeners(isvalid(oldSubplots(idx).limitListeners)));
+                    datatip(hLine, pos(1), pos(2));
                 catch
                 end
             end
         end
-
-        state.subplots     = newSubplots;
-        state.subplotRows  = rows;
-        state.subplotCols  = cols;
-        state.activeSubplot = min(state.activeSubplot, newCount);
-
-        setActiveSubplot(state.activeSubplot);
     end
 
     function setActiveSubplot(idx)
@@ -563,10 +714,12 @@ refreshWorkspaceControls();
         state.subplots(idx) = ensureSubplotStruct(state.subplots(idx));
         ax = state.subplots(idx).axes;
 
-        wireAxesInteractivity(ax);
-        ensureLineInteractivity(state.subplots(idx).lines);
-        applyLineTransformsForSubplot(idx);
-        applyAxesConfig(idx);
+        if ~isempty(ax) && isvalid(ax)
+            wireAxesInteractivity(ax);
+            ensureLineInteractivity(state.subplots(idx).lines);
+            applyLineTransformsForSubplot(idx);
+            applyAxesConfig(idx);
+        end
 
         rowIdx = ceil(idx / state.subplotCols);
         colIdx = mod(idx-1, state.subplotCols) + 1;
@@ -579,18 +732,24 @@ refreshWorkspaceControls();
         syncAxesControlsFromSubplot();
 
         % Sync axes text fields with the selected subplot
-        edtTitle.Value  = ax.Title.String;
-        edtXLabel.Value = ax.XLabel.String;
-        edtYLabel.Value = ax.YLabel.String;
+        if ~isempty(ax) && isvalid(ax)
+            edtTitle.Value  = ax.Title.String;
+            edtXLabel.Value = ax.XLabel.String;
+            edtYLabel.Value = ax.YLabel.String;
+        else
+            edtTitle.Value  = state.subplots(idx).titleText;
+            edtXLabel.Value = state.subplots(idx).xLabelText;
+            edtYLabel.Value = state.subplots(idx).yLabelText;
+        end
     end
 
     function lines = getCurrentLines()
         if isempty(state.subplots)
-            lines = struct('handle',{},'xName',{},'yName',{},'legend',{});
+            lines = struct('handle',{},'xName',{},'yName',{},'legend',{},'datatips',{},'xData',{},'yData',{},'gain',{},'offset',{},'color',{},'lineStyle',{},'lineWidth',{},'displayName',{});
             return;
         end
         state.subplots(state.activeSubplot) = ensureSubplotStruct(state.subplots(state.activeSubplot));
-        lines = state.subplots(state.activeSubplot).lines;
+        lines = ensureLineDefaults(state.subplots(state.activeSubplot).lines);
     end
 
     function setCurrentLines(lines)
@@ -632,37 +791,38 @@ refreshWorkspaceControls();
     end
 
     function onLayoutMenuPressed(~, ~)
-        setLayoutMenuVisibility(true);
-    end
+        layoutOptions = [1 1; 1 2; 2 1; 2 2; 2 3; 3 2; 3 3; 4 4];
+        dlg = uifigure('Name', 'Choose layout', ...
+            'WindowStyle', 'modal', ...
+            'Position', [fig.Position(1)+80, fig.Position(2)+80, 260, 220]);
 
-    function onLayoutCellSelected(~, event)
-        if isempty(event.Indices)
-            return;
+        gridRows = ceil(numel(layoutOptions(:,1)) / 3);
+        dlgGrid = uigridlayout(dlg, [gridRows, 3]);
+        dlgGrid.RowHeight   = repmat({50}, 1, gridRows);
+        dlgGrid.ColumnWidth = repmat({80}, 1, 3);
+
+        currentLayout = [state.subplotRows, state.subplotCols];
+        for optIdx = 1:size(layoutOptions, 1)
+            r = layoutOptions(optIdx, 1);
+            c = layoutOptions(optIdx, 2);
+            btn = uibutton(dlgGrid, ...
+                'Text', sprintf('%d x %d', r, c), ...
+                'ButtonPushedFcn', @(~, ~) selectLayout(r, c));
+            btn.Layout.Row    = ceil(optIdx / 3);
+            btn.Layout.Column = mod(optIdx-1, 3) + 1;
+            if isequal(currentLayout, [r c])
+                btn.FontWeight = 'bold';
+                btn.BackgroundColor = [0.9 0.95 1];
+            end
         end
 
-        rows = event.Indices(1);
-        cols = event.Indices(2);
-
-        applySubplotGrid(rows, cols);
-
-        newIdx = sub2ind([state.subplotRows, state.subplotCols], rows, cols);
-        setActiveSubplot(newIdx);
-
-        setLayoutMenuVisibility(false);
-    end
-
-    function setLayoutMenuVisibility(showTable)
-        if showTable
-            tblLayout.Visible = 'on';
-            tblLayout.Enable  = 'on';
-            rowHeights = defaultLayoutRowHeights;
-        else
-            tblLayout.Visible = 'off';
-            tblLayout.Enable  = 'off';
-            rowHeights = hiddenLayoutRowHeights;
+        function selectLayout(r, c)
+            applySubplotGrid(r, c);
+            try
+                delete(dlg);
+            catch
+            end
         end
-
-        subplotLayout.RowHeight = rowHeights;
     end
 
     function onSubplotSuperposeChanged(~, ~)
@@ -677,10 +837,18 @@ refreshWorkspaceControls();
         subplotInfo = state.subplots(idx);
         if isfield(subplotInfo, 'axes') && isvalid(subplotInfo.axes)
             cla(subplotInfo.axes);
+            title(subplotInfo.axes, '');
+            xlabel(subplotInfo.axes, '');
+            ylabel(subplotInfo.axes, '');
         end
 
         subplotInfo.lines = struct('handle',{},'xName',{},'yName',{},'legend',{},'datatips',{}, ...
-            'xData',{},'yData',{},'gain',{},'offset',{});
+            'xData',{},'yData',{},'gain',{},'offset',{},'color',{},'lineStyle',{},'lineWidth',{},'displayName',{});
+        subplotInfo.titleText  = '';
+        subplotInfo.xLabelText = '';
+        subplotInfo.yLabelText = '';
+        subplotInfo.xLim       = [];
+        subplotInfo.yLim       = [];
         state.subplots(idx) = subplotInfo;
 
         if idx == state.activeSubplot
@@ -790,7 +958,7 @@ refreshWorkspaceControls();
     function refreshWorkspaceControls()
         state.workspaceMeta = getWorkspaceSnapshot();
 
-        validNames = {state.workspaceMeta([state.workspaceMeta.isSupportedArray]).name};
+        validNames = {state.workspaceMeta([state.workspaceMeta.isValidXCandidate]).name};
 
         if isempty(validNames)
             ddXVar.Items   = {'<no valid arrays>'};
@@ -818,7 +986,7 @@ refreshWorkspaceControls();
     function subplotInfo = ensureSubplotStruct(subplotInfo)
         if ~isfield(subplotInfo, 'lines') || isempty(subplotInfo.lines)
             subplotInfo.lines = struct('handle',{},'xName',{},'yName',{},'legend',{},'datatips',{}, ...
-                'xData',{},'yData',{},'gain',{},'offset',{});
+                'xData',{},'yData',{},'gain',{},'offset',{},'color',{},'lineStyle',{},'lineWidth',{},'displayName',{});
         end
         subplotInfo.lines = ensureLineDefaults(subplotInfo.lines);
 
@@ -840,12 +1008,27 @@ refreshWorkspaceControls();
         if ~isfield(subplotInfo, 'limitListeners') || isempty(subplotInfo.limitListeners)
             subplotInfo.limitListeners = event.listener.empty;
         end
+        if ~isfield(subplotInfo, 'titleText')
+            subplotInfo.titleText = '';
+        end
+        if ~isfield(subplotInfo, 'xLabelText')
+            subplotInfo.xLabelText = '';
+        end
+        if ~isfield(subplotInfo, 'yLabelText')
+            subplotInfo.yLabelText = '';
+        end
+        if ~isfield(subplotInfo, 'xLim') || isempty(subplotInfo.xLim)
+            subplotInfo.xLim = [];
+        end
+        if ~isfield(subplotInfo, 'yLim') || isempty(subplotInfo.yLim)
+            subplotInfo.yLim = [];
+        end
     end
 
     function lines = ensureLineDefaults(lines)
         if nargin < 1 || isempty(lines)
             lines = struct('handle',{},'xName',{},'yName',{},'legend',{},'datatips',{}, ...
-                'xData',{},'yData',{},'gain',{},'offset',{});
+                'xData',{},'yData',{},'gain',{},'offset',{},'color',{},'lineStyle',{},'lineWidth',{},'displayName',{});
             return;
         end
 
@@ -854,7 +1037,14 @@ refreshWorkspaceControls();
                 lines(ln).legend = true;
             end
             if ~isfield(lines(ln), 'datatips') || isempty(lines(ln).datatips)
-                lines(ln).datatips = zeros(0, 2);
+                lines(ln).datatips = struct('dataIndex', {}, 'position', {});
+            elseif isnumeric(lines(ln).datatips)
+                numericTips = lines(ln).datatips;
+                tipStruct = struct('dataIndex', {}, 'position', {});
+                for tipIdx = 1:size(numericTips, 1)
+                    tipStruct(end+1) = struct('dataIndex', [], 'position', numericTips(tipIdx, 1:min(2, size(numericTips, 2)))); %#ok<AGROW>
+                end
+                lines(ln).datatips = tipStruct;
             end
             if ~isfield(lines(ln), 'gain') || isempty(lines(ln).gain)
                 lines(ln).gain = 1;
@@ -867,6 +1057,18 @@ refreshWorkspaceControls();
             end
             if ~isfield(lines(ln), 'yData') || isempty(lines(ln).yData)
                 lines(ln).yData = safeGetLineData(lines(ln).handle, 'YData');
+            end
+            if ~isfield(lines(ln), 'color') || isempty(lines(ln).color)
+                lines(ln).color = safeGetLineColor(lines(ln).handle);
+            end
+            if ~isfield(lines(ln), 'lineStyle') || isempty(lines(ln).lineStyle)
+                lines(ln).lineStyle = safeGetLineStyle(lines(ln).handle);
+            end
+            if ~isfield(lines(ln), 'lineWidth') || isempty(lines(ln).lineWidth)
+                lines(ln).lineWidth = safeGetLineWidth(lines(ln).handle);
+            end
+            if ~isfield(lines(ln), 'displayName') || isempty(lines(ln).displayName)
+                lines(ln).displayName = safeGetDisplayName(lines(ln).handle, lines(ln).yName);
             end
         end
     end
@@ -886,6 +1088,53 @@ refreshWorkspaceControls();
         data = data(:).';
     end
 
+    function col = safeGetLineColor(hLine)
+        col = [0 0.4470 0.7410];
+        if isempty(hLine) || ~isvalid(hLine)
+            return;
+        end
+        try
+            col = hLine.Color;
+        catch
+        end
+    end
+
+    function ls = safeGetLineStyle(hLine)
+        ls = '-';
+        if isempty(hLine) || ~isvalid(hLine)
+            return;
+        end
+        try
+            ls = hLine.LineStyle;
+        catch
+        end
+    end
+
+    function lw = safeGetLineWidth(hLine)
+        lw = 1.5;
+        if isempty(hLine) || ~isvalid(hLine)
+            return;
+        end
+        try
+            lw = hLine.LineWidth;
+        catch
+        end
+    end
+
+    function dn = safeGetDisplayName(hLine, fallback)
+        dn = '';
+        if nargin >= 2
+            dn = fallback;
+        end
+        if isempty(hLine) || ~isvalid(hLine)
+            return;
+        end
+        try
+            dn = hLine.DisplayName;
+        catch
+        end
+    end
+
     function tf = isSupportedArray(val)
         tf = isnumeric(val) || islogical(val) || ...
             isdatetime(val) || isduration(val);
@@ -894,14 +1143,14 @@ refreshWorkspaceControls();
     function meta = getWorkspaceSnapshot()
         % Gather workspace metadata for arrays and containers
         vars = evalin('base', 'whos');
-        meta = struct('name',{},'class',{},'size',{},'isSupportedArray',{},'numel',{},'isIntegerScalar',{},'kind',{},'scalarValue',{});
+        meta = struct('name',{},'class',{},'size',{},'isSupportedArray',{},'numel',{},'isIntegerScalar',{},'kind',{},'scalarValue',{},'isNumeric',{},'isValidXCandidate',{});
 
         for k = 1:numel(vars)
             name = vars(k).name;
 
             info = struct('name', name, 'class', '', 'size', [], ...
                 'isSupportedArray', false, 'numel', 0, ...
-                'isIntegerScalar', false, 'kind', '', 'scalarValue', []);
+                'isIntegerScalar', false, 'kind', '', 'scalarValue', [], 'isNumeric', false, 'isValidXCandidate', false);
 
             try
                 val = evalin('base', name);
@@ -915,6 +1164,8 @@ refreshWorkspaceControls();
             info.numel            = numel(val);
             info.kind             = classifyValueKind(val);
             info.isIntegerScalar  = isscalar(val) && isnumeric(val) && isfinite(val) && val == round(val);
+            info.isNumeric        = isnumeric(val);
+            info.isValidXCandidate = info.isNumeric && info.numel > 1;
             if info.isIntegerScalar
                 info.scalarValue = double(val);
             end
@@ -948,11 +1199,22 @@ refreshWorkspaceControls();
     end
 
     function onXSelectionChanged(~, ~)
+        validateSelectedX(true);
         updateYListForX();
     end
 
     function updateYListForX()
         validateCustomItems();
+
+        [isValidX, ~] = validateSelectedX(false);
+        if ~isValidX
+            lbYVar.Items     = {};
+            lbYVar.ItemsData = {};
+            lbYVar.Value     = {};
+            lbYVar.Enable    = 'off';
+            btnPlot.Enable   = 'off';
+            return;
+        end
 
         xLen   = getSelectedXLength();
         discovered = discoverBaseCandidates(xLen);
@@ -1283,7 +1545,11 @@ refreshWorkspaceControls();
 
         idx = find(strcmp({state.workspaceMeta.name}, xName), 1);
         if ~isempty(idx)
-            len = state.workspaceMeta(idx).numel;
+            if state.workspaceMeta(idx).isValidXCandidate
+                len = state.workspaceMeta(idx).numel;
+            else
+                len = [];
+            end
             return;
         end
 
@@ -1293,8 +1559,43 @@ refreshWorkspaceControls();
         end
     end
 
+    function [ok, msg] = validateSelectedX(showDialog)
+        if nargin < 1
+            showDialog = false;
+        end
+
+        ok = false;
+        msg = '';
+        xName = ddXVar.Value;
+        if strcmp(xName, '<select X>') || strcmp(xName, '<no valid arrays>') || isempty(xName)
+            msg = 'Please select a vector or array for X.';
+            return;
+        end
+
+        idx = find(strcmp({state.workspaceMeta.name}, xName), 1);
+        if ~isempty(idx)
+            meta = state.workspaceMeta(idx);
+            ok = meta.isValidXCandidate;
+            msg = 'X must be a numeric array with more than one element.';
+        else
+            try
+                xVal = evalin('base', xName);
+                ok = isnumeric(xVal) && numel(xVal) > 1;
+                msg = 'X must be a numeric array with more than one element.';
+            catch ME
+                msg = sprintf('Could not evaluate X: %s', ME.message);
+                ok = false;
+            end
+        end
+
+        if ~ok && showDialog
+            uialert(fig, msg, 'Invalid X selection');
+            ddXVar.Value = '<select X>';
+        end
+    end
+
     function syncPlotButtonState()
-        hasX = ~(strcmp(ddXVar.Value, '<select X>') || strcmp(ddXVar.Value, '<no valid arrays>'));
+        hasX = validateSelectedX(false);
         hasY = ~isempty(lbYVar.Items);
         btnPlot.Enable = ternary(hasX && hasY, 'on', 'off');
     end
@@ -1874,6 +2175,11 @@ refreshWorkspaceControls();
             return;
         end
 
+        [isValidX, msgX] = validateSelectedX(true);
+        if ~isValidX
+            return;
+        end
+
         % Evaluate X once
         try
             xVal = evalin('base', xName);
@@ -1882,9 +2188,8 @@ refreshWorkspaceControls();
                 xName, ME.message), 'Error evaluating X');
             return;
         end
-        if ~isSupportedArray(xVal)
-            uialert(fig, 'X variable must be numeric, logical, datetime or duration array.', ...
-                'Invalid X variable');
+        if ~(isnumeric(xVal) && numel(xVal) > 1)
+            uialert(fig, msgX, 'Invalid X variable');
             return;
         end
 
@@ -1955,11 +2260,15 @@ refreshWorkspaceControls();
                 lineInfo.xName   = xName;
                 lineInfo.yName   = yExpr;
                 lineInfo.legend  = true;
-                lineInfo.datatips = zeros(0, 2);
+                lineInfo.datatips = struct('dataIndex', {}, 'position', {});
                 lineInfo.xData   = xFlat(:).';
                 lineInfo.yData   = ySeries(:, sIdx).';
                 lineInfo.gain    = 1;
                 lineInfo.offset  = 0;
+                lineInfo.color   = hLine.Color;
+                lineInfo.lineStyle = hLine.LineStyle;
+                lineInfo.lineWidth = hLine.LineWidth;
+                lineInfo.displayName = hLine.DisplayName;
 
                 set(hLine.Annotation.LegendInformation, 'IconDisplayStyle', 'on');
 
@@ -2093,6 +2402,7 @@ refreshWorkspaceControls();
             newName = lines(idx).yName;
         end
         hLine.DisplayName = newName;
+        lines(idx).displayName = newName;
 
         items = lbLines.Items;
         if ischar(items)
@@ -2319,6 +2629,8 @@ refreshWorkspaceControls();
             hLine = lines(idx).handle;
             if isvalid(hLine)
                 hLine.Color = newColor;
+                lines(idx).color = newColor;
+                setCurrentLines(lines);
             end
         end
     end
@@ -2351,6 +2663,8 @@ refreshWorkspaceControls();
             return;
         end
         hLine.LineWidth = widthValue;
+        lines(idx).lineWidth = widthValue;
+        setCurrentLines(lines);
     end
 
     function onStyleChanged(~, ~)
@@ -2366,6 +2680,8 @@ refreshWorkspaceControls();
         end
 
         hLine.LineStyle = ddLineStyle.Value;
+        lines(idx).lineStyle = ddLineStyle.Value;
+        setCurrentLines(lines);
     end
 
     function onAxesTextChanged(~, ~)
@@ -2375,6 +2691,10 @@ refreshWorkspaceControls();
         end
 
         targetAx = state.subplots(state.activeSubplot).axes;
+        state.subplots(state.activeSubplot).titleText  = edtTitle.Value;
+        state.subplots(state.activeSubplot).xLabelText = edtXLabel.Value;
+        state.subplots(state.activeSubplot).yLabelText = edtYLabel.Value;
+
         if isempty(targetAx) || ~isvalid(targetAx)
             return;
         end
@@ -2726,6 +3046,15 @@ refreshWorkspaceControls();
         if subplotIdx < 1 || subplotIdx > numel(state.subplots)
             return;
         end
+        subplotInfo = ensureSubplotStruct(state.subplots(subplotIdx));
+        if ~isempty(subplotInfo.axes) && isvalid(subplotInfo.axes)
+            try
+                subplotInfo.xLim = subplotInfo.axes.XLim;
+                subplotInfo.yLim = subplotInfo.axes.YLim;
+            catch
+            end
+            state.subplots(subplotIdx) = subplotInfo;
+        end
         enforceTickSpacing(subplotIdx);
     end
 
@@ -2788,7 +3117,9 @@ refreshWorkspaceControls();
 
         if isa(graphObj, 'matlab.graphics.chart.primitive.Line')
             selectLineHandle(graphObj);
-            applyDatatip(graphObj, evt);
+            if state.datatipMode
+                applyDatatip(graphObj, evt);
+            end
         end
     end
 
@@ -2797,15 +3128,13 @@ refreshWorkspaceControls();
             return;
         end
 
-        tipPos = [];
-        try
-            tipPos = evt.IntersectionPoint;
-        catch
-        end
+        [dataIndex, tipPos] = resolveDatatipIndex(hLine, evt);
 
         dtHandle = [];
         try
-            if ~isempty(tipPos) && numel(tipPos) >= 2
+            if ~isempty(dataIndex)
+                dtHandle = datatip(hLine, 'DataIndex', dataIndex);
+            elseif ~isempty(tipPos) && numel(tipPos) >= 2
                 dtHandle = datatip(hLine, tipPos(1), tipPos(2));
             else
                 dtHandle = datatip(hLine);
@@ -2814,16 +3143,54 @@ refreshWorkspaceControls();
         end
 
         try
-            if ~isempty(dtHandle) && isvalid(dtHandle)
-                recordDatatipPosition(hLine, dtHandle.Position);
-            elseif ~isempty(tipPos)
-                recordDatatipPosition(hLine, tipPos);
+            if isempty(tipPos) && ~isempty(dataIndex) && isvalid(hLine)
+                xData = get(hLine, 'XData');
+                yData = get(hLine, 'YData');
+                if dataIndex >= 1 && dataIndex <= numel(xData) && dataIndex <= numel(yData)
+                    tipPos = [xData(dataIndex), yData(dataIndex)];
+                end
             end
+
+            recordDatatipPosition(hLine, tipPos, dataIndex);
         catch
         end
     end
 
-    function recordDatatipPosition(hLine, pos)
+    function [idx, pos] = resolveDatatipIndex(hLine, evt)
+        idx = [];
+        pos = [];
+
+        try
+            pos = evt.IntersectionPoint;
+        catch
+        end
+
+        xData = safeGetLineData(hLine, 'XData');
+        yData = safeGetLineData(hLine, 'YData');
+        if isempty(xData) || isempty(yData)
+            return;
+        end
+
+        if isempty(idx) && ~isempty(evt)
+            try
+                idx = evt.DataIndex;
+            catch
+            end
+        end
+
+        if isempty(idx) && ~isempty(pos)
+            idx = findClosestIndex(xData, yData, pos(1), pos(2));
+        end
+
+        if isempty(idx)
+            idx = 1;
+        end
+        if isempty(pos) && idx >= 1 && idx <= numel(xData) && idx <= numel(yData)
+            pos = [xData(idx), yData(idx)];
+        end
+    end
+
+    function recordDatatipPosition(hLine, pos, dataIndex)
         if isempty(hLine) || ~isvalid(hLine) || numel(pos) < 2
             return;
         end
@@ -2840,12 +3207,35 @@ refreshWorkspaceControls();
         end
 
         if ~isfield(lines(lineIdx), 'datatips') || isempty(lines(lineIdx).datatips)
-            lines(lineIdx).datatips = zeros(0, 2);
+            lines(lineIdx).datatips = struct('dataIndex', {}, 'position', {});
         end
 
-        pos = pos(:).';
-        lines(lineIdx).datatips(end+1, 1:2) = pos(1:2);
+        tips = lines(lineIdx).datatips;
+        tips(end+1) = struct('dataIndex', dataIndex, 'position', pos(1:2)); %#ok<AGROW>
+        lines(lineIdx).datatips = tips;
         state.subplots(subplotIdx).lines = lines;
+    end
+
+    function idx = findClosestIndex(xData, yData, xTarget, yTarget)
+        idx = [];
+        if isempty(xData) || isempty(yData)
+            return;
+        end
+        try
+            d = hypot(double(xData) - xTarget, double(yData) - yTarget);
+            [~, idx] = min(d);
+        catch
+            idx = 1;
+        end
+    end
+
+    function onDatatipModeToggled(src, ~)
+        state.datatipMode = logical(src.Value);
+        if state.datatipMode
+            src.Text = 'Datatip mode (on)';
+        else
+            src.Text = 'Datatip mode (off)';
+        end
     end
 
     function dtObjects = findDatatipObjects(axHandle)
@@ -2899,7 +3289,7 @@ refreshWorkspaceControls();
         end
 
         for lnIdx = 1:numel(subplotInfo.lines)
-            subplotInfo.lines(lnIdx).datatips = zeros(0, 2);
+            subplotInfo.lines(lnIdx).datatips = struct('dataIndex', {}, 'position', {});
         end
 
         dtObjects = findDatatipObjects(axLocal);
@@ -2919,7 +3309,20 @@ refreshWorkspaceControls();
                 continue;
             end
 
-            subplotInfo.lines(lineIdx).datatips(end+1, 1:2) = pos(1:2);
+            dataIndex = [];
+            try
+                dataIndex = dt.DataIndex;
+            catch
+            end
+            if isempty(dataIndex)
+                xData = safeGetLineData(subplotInfo.lines(lineIdx).handle, 'XData');
+                yData = safeGetLineData(subplotInfo.lines(lineIdx).handle, 'YData');
+                if ~isempty(xData) && ~isempty(yData)
+                    dataIndex = findClosestIndex(xData, yData, pos(1), pos(2));
+                end
+            end
+
+            subplotInfo.lines(lineIdx).datatips(end+1) = struct('dataIndex', dataIndex, 'position', pos(1:2)); %#ok<AGROW>
         end
 
         state.subplots(subplotIdx) = subplotInfo;
@@ -3039,7 +3442,8 @@ refreshWorkspaceControls();
             state.subplotRows, state.subplotCols);
         codeLines{end+1} = '';
 
-        for s = 1:numel(state.subplots)
+        visibleCount = min(numel(state.subplots), state.subplotRows * state.subplotCols);
+        for s = 1:visibleCount
             subplotInfo = state.subplots(s);
             if isempty(subplotInfo.lines)
                 continue;
@@ -3055,17 +3459,21 @@ refreshWorkspaceControls();
             for k = 1:numel(subplotInfo.lines)
                 info  = subplotInfo.lines(k);
                 hLine = info.handle;
-                if ~isvalid(hLine)
-                    continue;
-                end
 
                 lineVar = sprintf('hLine_%d_%d', s, k);
                 lineVarNames{k} = lineVar;
 
-                lw  = hLine.LineWidth;
-                ls  = hLine.LineStyle;
-                col = hLine.Color;
-                dn  = hLine.DisplayName;
+                if isvalid(hLine)
+                    lw  = hLine.LineWidth;
+                    ls  = hLine.LineStyle;
+                    col = hLine.Color;
+                    dn  = hLine.DisplayName;
+                else
+                    lw  = info.lineWidth;
+                    ls  = info.lineStyle;
+                    col = info.color;
+                    dn  = info.displayName;
+                end
                 dnEsc = strrep(dn, '''', '''''');
 
                 yExpr = info.yName;
@@ -3145,32 +3553,27 @@ refreshWorkspaceControls();
                     continue;
                 end
 
-                dtPositions = [];
+                tipEntries = [];
                 if isfield(subplotInfo.lines(dtIdx), 'datatips')
-                    dtPositions = subplotInfo.lines(dtIdx).datatips;
+                    tipEntries = subplotInfo.lines(dtIdx).datatips;
                 end
-                if isempty(dtPositions)
-                    dtObjects = findDatatipObjects(axLocal);
-                    targetHandle = subplotInfo.lines(dtIdx).handle;
-                    dtPositions = cell2mat(arrayfun(@(dt) reshape(dt.Position(1, 1:2), 1, 2), ...
-                        dtObjects(arrayfun(@(dt) isequal(getTarget(dt), targetHandle), dtObjects)), ...
-                        'UniformOutput', false).');
-                    subplotInfo.lines(dtIdx).datatips = dtPositions;
-                    state.subplots(s) = subplotInfo;
-                end
-                if isempty(dtPositions)
+                if isempty(tipEntries)
                     continue;
                 end
 
-                for tipRow = 1:size(dtPositions, 1)
-                    pos = dtPositions(tipRow, :);
+                for tipRow = 1:numel(tipEntries)
+                    entry = tipEntries(tipRow);
+                    if ~isempty(entry.dataIndex) && isfinite(entry.dataIndex)
+                        codeLines{end+1} = sprintf('try, datatip(%s, ''DataIndex'', %d); end', lineVarNames{dtIdx}, round(entry.dataIndex)); %#ok<AGROW>
+                        continue;
+                    end
+                    pos = entry.position;
                     if numel(pos) < 2
                         continue;
                     end
-
                     xTip = valueToLiteral(pos(1));
                     yTip = valueToLiteral(pos(2));
-                    codeLines{end+1} = sprintf('datatip(%s, %s, %s);', lineVarNames{dtIdx}, xTip, yTip); %#ok<AGROW>
+                    codeLines{end+1} = sprintf('try, datatip(%s, %s, %s); end', lineVarNames{dtIdx}, xTip, yTip); %#ok<AGROW>
                 end
             end
 
