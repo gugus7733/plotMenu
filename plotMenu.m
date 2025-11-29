@@ -944,9 +944,8 @@ refreshWorkspaceControls();
     end
 
     function onDerivedFieldEdited(~, ~)
-        if state.derivedMode
-            tryCreateDerivedVariable();
-        end
+        % Variable creation is only attempted when the user confirms with Enter.
+        % Avoid evaluating partial input while the user is typing a name or expression.
     end
 
     function onWindowKeyPressed(~, evt)
@@ -1039,12 +1038,13 @@ refreshWorkspaceControls();
         newName = strtrim(edtDerivedName.Value);
         expr    = strtrim(edtDerivedExpr.Value);
 
-        if isempty(newName) || ~isvarname(newName)
-            setStatus('Please provide a valid MATLAB variable name.', true);
+        % Require both fields before attempting to evaluate; otherwise stay quiet
+        if isempty(newName) || isempty(expr)
             return;
         end
-        if isempty(expr)
-            setStatus('Enter an expression that uses existing variables.', true);
+
+        if ~isvarname(newName)
+            setStatus('Please provide a valid MATLAB variable name.', true);
             return;
         end
 
@@ -3554,18 +3554,35 @@ refreshWorkspaceControls();
             return;
         end
 
-        if isprop(dtObj, 'Host') && ~isempty(dtObj.Host)
-            tgt = dtObj.Host;
-            return;
+        propNames = {'Target', 'DataSource', 'Host'};
+        for pIdx = 1:numel(propNames)
+            name = propNames{pIdx};
+            if isprop(dtObj, name)
+                try
+                    candidate = dtObj.(name);
+                    if ~isempty(candidate) && isgraphics(candidate)
+                        tgt = candidate;
+                        return;
+                    end
+                catch
+                end
+            end
         end
 
-        if isprop(dtObj, 'DataSource') && ~isempty(dtObj.DataSource)
-            tgt = dtObj.DataSource;
-            return;
+        try
+            if isprop(dtObj, 'Parent') && isvalid(dtObj.Parent)
+                parentObj = dtObj.Parent;
+                if isprop(parentObj, 'Host') && ~isempty(parentObj.Host) && isgraphics(parentObj.Host)
+                    tgt = parentObj.Host;
+                    return;
+                end
+            end
+        catch
         end
 
-        if isprop(dtObj, 'Target') && ~isempty(dtObj.Target)
-            tgt = dtObj.Target;
+        tgt = ancestor(dtObj, 'matlab.graphics.chart.primitive.Line');
+        if isempty(tgt) || ~isvalid(tgt)
+            tgt = [];
         end
     end
 
@@ -3577,11 +3594,12 @@ refreshWorkspaceControls();
 
         tgt = getTarget(dtObj);
         if isempty(tgt) || ~isvalid(tgt)
-            return;
+            targetAxes = ancestor(dtObj, 'axes');
+        else
+            targetAxes = ancestor(tgt, 'axes');
         end
 
-        targetAxes = ancestor(tgt, 'axes');
-        tf = isequal(targetAxes, axHandle);
+        tf = ~isempty(targetAxes) && isvalid(targetAxes) && isequal(targetAxes, axHandle);
     end
 
     function syncDatatipsFromAxes(subplotIdx)
