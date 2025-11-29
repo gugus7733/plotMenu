@@ -7,3 +7,4 @@ Additional project notes for Codex:
 - The main GUI entry point is `plotMenu.m`; keep GUI logic self-contained there.
 - Use `plotMenu_validation.m` to seed the base workspace with diverse sample variables and launch the GUI for manual testing.
 - Prefer MATLAB scripts over functions for quick validation data so variables land in the base workspace.
+- Only use MATLAB functions or properties that existed in or before R2022a; avoid newer functionality.
