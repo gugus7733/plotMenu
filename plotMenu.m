@@ -23,7 +23,8 @@ end
 % Shared state across nested callbacks
 state         = struct();
 statusTimer   = [];
-state.subplots = struct('axes',{},'lines',{},'superpose',{},'legendVisible',{},'legendLocation',{});
+state.subplots = struct('axes',{},'lines',{},'superpose',{},'legendVisible',{},'legendLocation',{}, ...
+    'axisEqual',{},'xTickSpacing',{},'yTickSpacing',{},'xScale',{},'yScale',{},'limitListeners',{});
 state.subplotRows = 1;
 state.subplotCols = 1;
 state.activeSubplot = 1;
@@ -45,8 +46,8 @@ leftPanel  = uipanel(mainLayout, 'Title', 'Data selection', 'BackgroundColor', [
 leftPanel.Layout.Row    = 1;
 leftPanel.Layout.Column = 1;
 
-leftLayout = uigridlayout(leftPanel, [11 1]);
-leftLayout.RowHeight = {'fit', 'fit', 'fit', 'fit', 'fit', '1x', 'fit', 'fit', 'fit', 'fit', 'fit'};
+leftLayout = uigridlayout(leftPanel, [12 1]);
+leftLayout.RowHeight = {'fit', 'fit', 'fit', 'fit', 'fit', '1x', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit'};
 
 subplotPanel = uipanel(leftLayout, 'Title', 'Subplots', 'BackgroundColor', [1 1 1]);
 subplotPanel.Layout.Row    = 1;
@@ -113,10 +114,16 @@ btnOtherData = uibutton(leftLayout, ...
 btnOtherData.Layout.Row    = 7;
 btnOtherData.Layout.Column = 1;
 
+btnDerivedVar = uibutton(leftLayout, ...
+    'Text', 'Create derived variable...', ...
+    'ButtonPushedFcn', @onCreateDerivedVariable);
+btnDerivedVar.Layout.Row    = 8;
+btnDerivedVar.Layout.Column = 1;
+
 btnPlot = uibutton(leftLayout, ...
     'Text',          'Plot selected', ...
     'ButtonPushedFcn', @onPlot);
-btnPlot.Layout.Row    = 11;
+btnPlot.Layout.Row    = 12;
 btnPlot.Layout.Column = 1;
 
 %% Center panel: axes
@@ -151,8 +158,8 @@ linePanel = uipanel(rightLayout, 'Title', 'Line properties', 'BackgroundColor', 
 linePanel.Layout.Row    = 1;
 linePanel.Layout.Column = 1;
 
-lineLayout = uigridlayout(linePanel, [10 3]);
-lineLayout.RowHeight   = {20, 40, 20, 24, 30, 30, 30, 30, 30, '1x'};
+lineLayout = uigridlayout(linePanel, [13 3]);
+lineLayout.RowHeight   = {20, 40, 20, 24, 30, 30, 30, 30, 24, 30, 30, 30, '1x'};
 lineLayout.ColumnWidth = {80, '1x', '1x'};
 
 lblLines = uilabel(lineLayout, 'Text', 'Lines:');
@@ -241,10 +248,49 @@ chkLineLegend = uicheckbox(lineLayout, ...
 chkLineLegend.Layout.Row    = 8;
 chkLineLegend.Layout.Column = [1 3];
 
+lblTransform = uilabel(lineLayout, ...
+    'Text', 'Curve transform (active line)');
+lblTransform.Layout.Row    = 9;
+lblTransform.Layout.Column = [1 3];
+
+lblGain = uilabel(lineLayout, 'Text', 'Gain:');
+lblGain.Layout.Row    = 10;
+lblGain.Layout.Column = 1;
+
+edtLineGain = uieditfield(lineLayout, 'numeric', ...
+    'Value', 1, ...
+    'Limits', [-Inf Inf], ...
+    'ValueChangedFcn', @onLineTransformChanged);
+edtLineGain.Layout.Row    = 10;
+edtLineGain.Layout.Column = 2;
+
+btnPresetDeg2Rad = uibutton(lineLayout, ...
+    'Text', 'deg → rad', ...
+    'ButtonPushedFcn', @(~, ~) applyTransformPreset('deg2rad'));
+btnPresetDeg2Rad.Layout.Row    = 10;
+btnPresetDeg2Rad.Layout.Column = 3;
+
+lblOffset = uilabel(lineLayout, 'Text', 'Offset:');
+lblOffset.Layout.Row    = 11;
+lblOffset.Layout.Column = 1;
+
+edtLineOffset = uieditfield(lineLayout, 'numeric', ...
+    'Value', 0, ...
+    'Limits', [-Inf Inf], ...
+    'ValueChangedFcn', @onLineTransformChanged);
+edtLineOffset.Layout.Row    = 11;
+edtLineOffset.Layout.Column = 2;
+
+btnPresetRad2Deg = uibutton(lineLayout, ...
+    'Text', 'rad → deg', ...
+    'ButtonPushedFcn', @(~, ~) applyTransformPreset('rad2deg'));
+btnPresetRad2Deg.Layout.Row    = 11;
+btnPresetRad2Deg.Layout.Column = 3;
+
 btnRemoveLine = uibutton(lineLayout, ...
     'Text', 'Remove selected line', ...
     'ButtonPushedFcn', @onRemoveLine);
-btnRemoveLine.Layout.Row    = 9;
+btnRemoveLine.Layout.Row    = 12;
 btnRemoveLine.Layout.Column = [1 3];
 
 % --- Axes properties panel ---
@@ -253,8 +299,8 @@ axesPanel = uipanel(rightLayout, 'Title', 'Axes properties', 'BackgroundColor', 
 axesPanel.Layout.Row    = 2;
 axesPanel.Layout.Column = 1;
 
-axesLayout = uigridlayout(axesPanel, [9 2]);
-axesLayout.RowHeight   = {20, 30, 20, 30, 20, 30, 30, 30, '1x'};
+axesLayout = uigridlayout(axesPanel, [15 2]);
+axesLayout.RowHeight   = {20, 30, 20, 30, 20, 30, 30, 20, 30, 20, 110, 20, 30, 30, '1x'};
 axesLayout.ColumnWidth = {100, '1x'};
 
 lblTitle = uilabel(axesLayout, 'Text', 'Title:');
@@ -304,22 +350,97 @@ ddLegendLocation = uidropdown(axesLayout, ...
 ddLegendLocation.Layout.Row    = 5;
 ddLegendLocation.Layout.Column = 2;
 
+lblAxesScaleHeader = uilabel(axesLayout, ...
+    'Text', 'Axes & scale (active subplot)', ...
+    'FontWeight', 'bold');
+lblAxesScaleHeader.Layout.Row    = 10;
+lblAxesScaleHeader.Layout.Column = [1 2];
+
+axesScalePanel = uipanel(axesLayout, 'BackgroundColor', [1 1 1]);
+axesScalePanel.Layout.Row    = 11;
+axesScalePanel.Layout.Column = [1 2];
+
+axesScaleLayout = uigridlayout(axesScalePanel, [4 4]);
+axesScaleLayout.RowHeight   = {24, 24, 24, 24};
+axesScaleLayout.ColumnWidth = {70, '1x', 70, '1x'};
+
+chkAxisEqual = uicheckbox(axesScaleLayout, ...
+    'Text', 'Axis equal (selected subplot)', ...
+    'Value', false, ...
+    'ValueChangedFcn', @onAxisEqualToggled);
+chkAxisEqual.Layout.Row    = 1;
+chkAxisEqual.Layout.Column = [1 4];
+
+lblXTickSpacing = uilabel(axesScaleLayout, 'Text', 'X tick \u0394:');
+lblXTickSpacing.Layout.Row    = 2;
+lblXTickSpacing.Layout.Column = 1;
+
+edtXTickSpacing = uieditfield(axesScaleLayout, 'text', ...
+    'Value', '', ...
+    'ValueChangedFcn', @(src, ~) onTickSpacingChanged(src, 'x'));
+edtXTickSpacing.Layout.Row    = 2;
+edtXTickSpacing.Layout.Column = 2;
+
+btnAutoXTicks = uibutton(axesScaleLayout, ...
+    'Text', 'Auto', ...
+    'ButtonPushedFcn', @(~, ~) onResetTickSpacing('x'));
+btnAutoXTicks.Layout.Row    = 2;
+btnAutoXTicks.Layout.Column = 4;
+
+lblYTickSpacing = uilabel(axesScaleLayout, 'Text', 'Y tick \u0394:');
+lblYTickSpacing.Layout.Row    = 3;
+lblYTickSpacing.Layout.Column = 1;
+
+edtYTickSpacing = uieditfield(axesScaleLayout, 'text', ...
+    'Value', '', ...
+    'ValueChangedFcn', @(src, ~) onTickSpacingChanged(src, 'y'));
+edtYTickSpacing.Layout.Row    = 3;
+edtYTickSpacing.Layout.Column = 2;
+
+btnAutoYTicks = uibutton(axesScaleLayout, ...
+    'Text', 'Auto', ...
+    'ButtonPushedFcn', @(~, ~) onResetTickSpacing('y'));
+btnAutoYTicks.Layout.Row    = 3;
+btnAutoYTicks.Layout.Column = 4;
+
+lblXScale = uilabel(axesScaleLayout, 'Text', 'X scale:');
+lblXScale.Layout.Row    = 4;
+lblXScale.Layout.Column = 1;
+
+ddXScale = uidropdown(axesScaleLayout, ...
+    'Items', {'linear', 'log'}, ...
+    'Value', 'linear', ...
+    'ValueChangedFcn', @(src, ~) onAxisScaleChanged(src, 'x'));
+ddXScale.Layout.Row    = 4;
+ddXScale.Layout.Column = 2;
+
+lblYScale = uilabel(axesScaleLayout, 'Text', 'Y scale:');
+lblYScale.Layout.Row    = 4;
+lblYScale.Layout.Column = 3;
+
+ddYScale = uidropdown(axesScaleLayout, ...
+    'Items', {'linear', 'log'}, ...
+    'Value', 'linear', ...
+    'ValueChangedFcn', @(src, ~) onAxisScaleChanged(src, 'y'));
+ddYScale.Layout.Row    = 4;
+ddYScale.Layout.Column = 4;
+
 lblActiveSubplot = uilabel(axesLayout, ...
     'Text', 'Active subplot: (1,1)');
-lblActiveSubplot.Layout.Row    = 6;
+lblActiveSubplot.Layout.Row    = 12;
 lblActiveSubplot.Layout.Column = [1 2];
 
 chkSubplotSuperpose = uicheckbox(axesLayout, ...
     'Text',  'Superpose in subplot', ...
     'Value', false, ...
     'ValueChangedFcn', @onSubplotSuperposeChanged);
-chkSubplotSuperpose.Layout.Row    = 7;
+chkSubplotSuperpose.Layout.Row    = 13;
 chkSubplotSuperpose.Layout.Column = [1 2];
 
 btnClear = uibutton(axesLayout, ...
     'Text',          'Clear selected subplot', ...
     'ButtonPushedFcn', @onClearPlot);
-btnClear.Layout.Row    = 8;
+btnClear.Layout.Row    = 14;
 btnClear.Layout.Column = [1 2];
 
 % --- Export button ---
@@ -357,10 +478,16 @@ refreshWorkspaceControls();
 
         defaultSubplot = struct( ...
             'axes',           [], ...
-            'lines',          struct('handle',{},'xName',{},'yName',{},'legend',{},'datatips',{}), ...
+            'lines',          struct('handle',{},'xName',{},'yName',{},'legend',{},'datatips',{},'xData',{},'yData',{},'gain',{},'offset',{}), ...
             'superpose',      false, ...
             'legendVisible',  true, ...
-            'legendLocation', 'best');
+            'legendLocation', 'best', ...
+            'axisEqual',      false, ...
+            'xTickSpacing',   [], ...
+            'yTickSpacing',   [], ...
+            'xScale',         'linear', ...
+            'yScale',         'linear', ...
+            'limitListeners', event.listener.empty);
         newSubplots = repmat(defaultSubplot, 1, newCount);
 
         for idx = 1:newCount
@@ -401,11 +528,21 @@ refreshWorkspaceControls();
                     newSubplots(idx).lines(ln).datatips = zeros(0, 2);
                 end
             end
+
+            newSubplots(idx) = ensureSubplotStruct(newSubplots(idx));
+            attachLimitListeners(axLocal, idx);
+            applyAxesConfig(idx);
         end
 
         for idx = newCount+1:numel(oldSubplots)
             if isfield(oldSubplots(idx), 'axes') && isvalid(oldSubplots(idx).axes)
                 delete(oldSubplots(idx).axes);
+            end
+            if isfield(oldSubplots(idx), 'limitListeners') && ~isempty(oldSubplots(idx).limitListeners)
+                try
+                    delete(oldSubplots(idx).limitListeners(isvalid(oldSubplots(idx).limitListeners)));
+                catch
+                end
             end
         end
 
@@ -423,10 +560,13 @@ refreshWorkspaceControls();
         end
 
         state.activeSubplot = idx;
+        state.subplots(idx) = ensureSubplotStruct(state.subplots(idx));
         ax = state.subplots(idx).axes;
 
         wireAxesInteractivity(ax);
         ensureLineInteractivity(state.subplots(idx).lines);
+        applyLineTransformsForSubplot(idx);
+        applyAxesConfig(idx);
 
         rowIdx = ceil(idx / state.subplotCols);
         colIdx = mod(idx-1, state.subplotCols) + 1;
@@ -436,6 +576,7 @@ refreshWorkspaceControls();
 
         syncLegendControlsFromSubplot(idx);
         refreshLineListFromSubplot();
+        syncAxesControlsFromSubplot();
 
         % Sync axes text fields with the selected subplot
         edtTitle.Value  = ax.Title.String;
@@ -448,11 +589,12 @@ refreshWorkspaceControls();
             lines = struct('handle',{},'xName',{},'yName',{},'legend',{});
             return;
         end
+        state.subplots(state.activeSubplot) = ensureSubplotStruct(state.subplots(state.activeSubplot));
         lines = state.subplots(state.activeSubplot).lines;
     end
 
     function setCurrentLines(lines)
-        state.subplots(state.activeSubplot).lines = lines;
+        state.subplots(state.activeSubplot).lines = ensureLineDefaults(lines);
     end
 
     function refreshLineListFromSubplot(selectedHandle)
@@ -537,7 +679,8 @@ refreshWorkspaceControls();
             cla(subplotInfo.axes);
         end
 
-        subplotInfo.lines = struct('handle',{},'xName',{},'yName',{},'legend',{},'datatips',{});
+        subplotInfo.lines = struct('handle',{},'xName',{},'yName',{},'legend',{},'datatips',{}, ...
+            'xData',{},'yData',{},'gain',{},'offset',{});
         state.subplots(idx) = subplotInfo;
 
         if idx == state.activeSubplot
@@ -551,6 +694,97 @@ refreshWorkspaceControls();
 
     function onRefreshWorkspace(~, ~)
         refreshWorkspaceControls();
+    end
+
+    function onCreateDerivedVariable(~, ~)
+        refreshWorkspaceControls();
+        varNames = {state.workspaceMeta.name};
+        if isempty(varNames)
+            varNames = {''};
+        end
+
+        dlg = uifigure('Name', 'Create derived variable', ...
+            'Position', [200 200 420 260], ...
+            'WindowStyle', 'modal');
+
+        dlgLayout = uigridlayout(dlg, [4 2]);
+        dlgLayout.RowHeight   = {22, 22, 120, 30};
+        dlgLayout.ColumnWidth = {130, '1x'};
+
+        uilabel(dlgLayout, 'Text', 'New variable name:', 'HorizontalAlignment', 'right');
+        edtNewVar = uieditfield(dlgLayout, 'text');
+        edtNewVar.Layout.Row    = 1;
+        edtNewVar.Layout.Column = 2;
+
+        uilabel(dlgLayout, 'Text', 'Expression:', 'HorizontalAlignment', 'right');
+        edtExpression = uieditfield(dlgLayout, 'text');
+        edtExpression.Layout.Row    = 2;
+        edtExpression.Layout.Column = 2;
+
+        uilabel(dlgLayout, 'Text', 'Workspace variables:', 'HorizontalAlignment', 'right');
+        lstVars = uilistbox(dlgLayout, ...
+            'Items', varNames, ...
+            'Multiselect', 'off', ...
+            'ValueChangedFcn', @(src, ~) appendVariable(src));
+        lstVars.Layout.Row    = 3;
+        lstVars.Layout.Column = 2;
+
+        btnCancel = uibutton(dlgLayout, 'Text', 'Cancel', ...
+            'ButtonPushedFcn', @(~, ~) delete(dlg));
+        btnCancel.Layout.Row    = 4;
+        btnCancel.Layout.Column = 1;
+
+        btnCreate = uibutton(dlgLayout, 'Text', 'Create', ...
+            'ButtonPushedFcn', @doCreate);
+        btnCreate.Layout.Row    = 4;
+        btnCreate.Layout.Column = 2;
+
+        function appendVariable(src)
+            val = src.Value;
+            if isempty(val)
+                return;
+            end
+            expr = strtrim(edtExpression.Value);
+            if isempty(expr)
+                edtExpression.Value = val;
+            else
+                edtExpression.Value = sprintf('%s %s', expr, val);
+            end
+        end
+
+        function doCreate(~, ~)
+            newName = strtrim(edtNewVar.Value);
+            expr    = strtrim(edtExpression.Value);
+
+            if isempty(newName) || ~isvarname(newName)
+                uialert(dlg, 'Please provide a valid MATLAB variable name.', 'Invalid name');
+                return;
+            end
+            if isempty(expr)
+                uialert(dlg, 'Enter an expression that uses existing variables.', 'Missing expression');
+                return;
+            end
+
+            try
+                val = evalin('base', expr);
+            catch ME
+                uialert(dlg, sprintf('Error evaluating expression:\n%s', ME.message), 'Evaluation error');
+                return;
+            end
+
+            try
+                assignin('base', newName, val);
+                refreshWorkspaceControls();
+            catch ME
+                uialert(dlg, sprintf('Could not create variable:\n%s', ME.message), 'Assignment error');
+                return;
+            end
+
+            try
+                delete(dlg);
+            catch
+            end
+        end
     end
 
     function refreshWorkspaceControls()
@@ -579,6 +813,77 @@ refreshWorkspaceControls();
         ddXVar.Enable = 'on';
 
         updateYListForX();
+    end
+
+    function subplotInfo = ensureSubplotStruct(subplotInfo)
+        if ~isfield(subplotInfo, 'lines') || isempty(subplotInfo.lines)
+            subplotInfo.lines = struct('handle',{},'xName',{},'yName',{},'legend',{},'datatips',{}, ...
+                'xData',{},'yData',{},'gain',{},'offset',{});
+        end
+        subplotInfo.lines = ensureLineDefaults(subplotInfo.lines);
+
+        if ~isfield(subplotInfo, 'axisEqual') || isempty(subplotInfo.axisEqual)
+            subplotInfo.axisEqual = false;
+        end
+        if ~isfield(subplotInfo, 'xTickSpacing')
+            subplotInfo.xTickSpacing = [];
+        end
+        if ~isfield(subplotInfo, 'yTickSpacing')
+            subplotInfo.yTickSpacing = [];
+        end
+        if ~isfield(subplotInfo, 'xScale') || isempty(subplotInfo.xScale)
+            subplotInfo.xScale = 'linear';
+        end
+        if ~isfield(subplotInfo, 'yScale') || isempty(subplotInfo.yScale)
+            subplotInfo.yScale = 'linear';
+        end
+        if ~isfield(subplotInfo, 'limitListeners') || isempty(subplotInfo.limitListeners)
+            subplotInfo.limitListeners = event.listener.empty;
+        end
+    end
+
+    function lines = ensureLineDefaults(lines)
+        if nargin < 1 || isempty(lines)
+            lines = struct('handle',{},'xName',{},'yName',{},'legend',{},'datatips',{}, ...
+                'xData',{},'yData',{},'gain',{},'offset',{});
+            return;
+        end
+
+        for ln = 1:numel(lines)
+            if ~isfield(lines(ln), 'legend')
+                lines(ln).legend = true;
+            end
+            if ~isfield(lines(ln), 'datatips') || isempty(lines(ln).datatips)
+                lines(ln).datatips = zeros(0, 2);
+            end
+            if ~isfield(lines(ln), 'gain') || isempty(lines(ln).gain)
+                lines(ln).gain = 1;
+            end
+            if ~isfield(lines(ln), 'offset') || isempty(lines(ln).offset)
+                lines(ln).offset = 0;
+            end
+            if ~isfield(lines(ln), 'xData') || isempty(lines(ln).xData)
+                lines(ln).xData = safeGetLineData(lines(ln).handle, 'XData');
+            end
+            if ~isfield(lines(ln), 'yData') || isempty(lines(ln).yData)
+                lines(ln).yData = safeGetLineData(lines(ln).handle, 'YData');
+            end
+        end
+    end
+
+    function data = safeGetLineData(hLine, prop)
+        data = [];
+        if isempty(hLine) || ~isvalid(hLine)
+            return;
+        end
+
+        try
+            data = get(hLine, prop);
+        catch
+            data = [];
+        end
+
+        data = data(:).';
     end
 
     function tf = isSupportedArray(val)
@@ -1651,6 +1956,10 @@ refreshWorkspaceControls();
                 lineInfo.yName   = yExpr;
                 lineInfo.legend  = true;
                 lineInfo.datatips = zeros(0, 2);
+                lineInfo.xData   = xFlat(:).';
+                lineInfo.yData   = ySeries(:, sIdx).';
+                lineInfo.gain    = 1;
+                lineInfo.offset  = 0;
 
                 set(hLine.Annotation.LegendInformation, 'IconDisplayStyle', 'on');
 
@@ -1664,6 +1973,9 @@ refreshWorkspaceControls();
         hold(targetAx, 'off');
 
         state.subplots(subplotIdx) = subplotInfo;
+
+        applyLineTransformsForSubplot(subplotIdx);
+        applyAxesConfig(subplotIdx);
 
         if ~anyPlotted
             % If nothing new was plotted, keep existing lines when
@@ -1731,6 +2043,8 @@ refreshWorkspaceControls();
             edtLineWidth.Value       = 1.5;
             ddLineStyle.Value        = '-';
             chkLineLegend.Value      = true;
+            edtLineGain.Value        = 1;
+            edtLineOffset.Value      = 0;
             return;
         end
 
@@ -1758,6 +2072,9 @@ refreshWorkspaceControls();
 
         legendInfo = hLine.Annotation.LegendInformation;
         chkLineLegend.Value = strcmp(legendInfo.IconDisplayStyle, 'on');
+
+        edtLineGain.Value   = lines(idx).gain;
+        edtLineOffset.Value = lines(idx).offset;
     end
 
     function onLineNameChanged(~, ~)
@@ -1811,6 +2128,85 @@ refreshWorkspaceControls();
         setCurrentLines(lines);
 
         updateLegend();
+    end
+
+    function onLineTransformChanged(~, ~)
+        idx = getSelectedLineIndex();
+        if idx == 0
+            return;
+        end
+
+        lines = getCurrentLines();
+        lines(idx).gain   = edtLineGain.Value;
+        lines(idx).offset = edtLineOffset.Value;
+        state.subplots(state.activeSubplot).lines = ensureLineDefaults(lines);
+
+        applyLineTransformsForSubplot(state.activeSubplot);
+        enforceLogSafetyAfterTransform();
+    end
+
+    function applyLineTransformsForSubplot(subplotIdx)
+        if subplotIdx < 1 || subplotIdx > numel(state.subplots)
+            return;
+        end
+
+        subplotInfo = ensureSubplotStruct(state.subplots(subplotIdx));
+        for ln = 1:numel(subplotInfo.lines)
+            subplotInfo.lines(ln) = ensureLineDefaults(subplotInfo.lines(ln));
+            hLine = subplotInfo.lines(ln).handle;
+            if isempty(hLine) || ~isvalid(hLine)
+                continue;
+            end
+            if ~isempty(subplotInfo.lines(ln).xData)
+                try
+                    set(hLine, 'XData', subplotInfo.lines(ln).xData);
+                catch
+                end
+            end
+
+            yDisplay = getDisplayY(subplotInfo.lines(ln));
+            try
+                set(hLine, 'YData', yDisplay);
+            catch
+            end
+        end
+
+        state.subplots(subplotIdx) = subplotInfo;
+    end
+
+    function enforceLogSafetyAfterTransform()
+        subplotIdx = state.activeSubplot;
+        if subplotIdx < 1 || subplotIdx > numel(state.subplots)
+            return;
+        end
+
+        subplotInfo = ensureSubplotStruct(state.subplots(subplotIdx));
+        if strcmp(subplotInfo.yScale, 'log')
+            data = gatherAxisData(subplotInfo, 'y');
+            if any(~isfinite(data) | data <= 0)
+                uialert(fig, ['Transformed Y data includes non-positive values; reverting Y axis to linear ', ...
+                    'to keep the plot readable.'], 'Log scale reverted');
+                subplotInfo.yScale = 'linear';
+                state.subplots(subplotIdx) = subplotInfo;
+                ddYScale.Value = 'linear';
+                applyAxesConfig(subplotIdx);
+                syncAxesControlsFromSubplot();
+            end
+        end
+    end
+
+    function applyTransformPreset(kind)
+        switch kind
+            case 'deg2rad'
+                edtLineGain.Value   = pi / 180;
+                edtLineOffset.Value = 0;
+            case 'rad2deg'
+                edtLineGain.Value   = 180 / pi;
+                edtLineOffset.Value = 0;
+            otherwise
+                return;
+        end
+        onLineTransformChanged();
     end
 
     function onMoveLineBackward(~, ~)
@@ -1988,6 +2384,82 @@ refreshWorkspaceControls();
         ylabel(targetAx, edtYLabel.Value);
     end
 
+    function onAxisEqualToggled(~, ~)
+        if isempty(state.subplots)
+            return;
+        end
+        state.subplots(state.activeSubplot).axisEqual = chkAxisEqual.Value;
+        applyAxesConfig(state.activeSubplot);
+    end
+
+    function onAxisScaleChanged(src, axisName)
+        if isempty(state.subplots)
+            return;
+        end
+
+        subplotIdx = state.activeSubplot;
+        desired = src.Value;
+        [ok, msg] = canUseLogScale(subplotIdx, axisName, desired);
+        if ~ok
+            uialert(fig, msg, 'Cannot apply log scale');
+            src.Value = 'linear';
+            desired = 'linear';
+        end
+
+        fieldName = ternary(axisName == 'x', 'xScale', 'yScale');
+        state.subplots(subplotIdx).(fieldName) = desired;
+        applyAxesConfig(subplotIdx);
+        syncAxesControlsFromSubplot();
+    end
+
+    function onTickSpacingChanged(src, axisName)
+        spacing = str2double(strtrim(src.Value));
+        if isempty(src.Value) || isnan(spacing) || spacing <= 0
+            spacing = [];
+        end
+
+        if axisName == 'x'
+            state.subplots(state.activeSubplot).xTickSpacing = spacing;
+        else
+            state.subplots(state.activeSubplot).yTickSpacing = spacing;
+        end
+
+        src.Value = spacingToString(spacing);
+        applyAxesConfig(state.activeSubplot);
+    end
+
+    function onResetTickSpacing(axisName)
+        if axisName == 'x'
+            state.subplots(state.activeSubplot).xTickSpacing = [];
+            edtXTickSpacing.Value = '';
+        else
+            state.subplots(state.activeSubplot).yTickSpacing = [];
+            edtYTickSpacing.Value = '';
+        end
+        applyAxesConfig(state.activeSubplot);
+    end
+
+    function syncAxesControlsFromSubplot()
+        if isempty(state.subplots)
+            return;
+        end
+
+        subplotInfo = ensureSubplotStruct(state.subplots(state.activeSubplot));
+        chkAxisEqual.Value   = subplotInfo.axisEqual;
+        ddXScale.Value       = subplotInfo.xScale;
+        ddYScale.Value       = subplotInfo.yScale;
+        edtXTickSpacing.Value = spacingToString(subplotInfo.xTickSpacing);
+        edtYTickSpacing.Value = spacingToString(subplotInfo.yTickSpacing);
+    end
+
+    function out = spacingToString(val)
+        if isempty(val) || ~isfinite(val) || val <= 0
+            out = '';
+            return;
+        end
+        out = char(string(val));
+    end
+
     function onLegendChanged(~, ~)
         idx = state.activeSubplot;
         state.subplots(idx).legendVisible  = chkLegend.Value;
@@ -2037,6 +2509,255 @@ refreshWorkspaceControls();
             lgd.Location = subplotInfo.legendLocation;
             lgd.Visible  = 'on';
         end
+    end
+
+    function applyAxesConfig(subplotIdx)
+        if subplotIdx < 1 || subplotIdx > numel(state.subplots)
+            return;
+        end
+
+        subplotInfo = ensureSubplotStruct(state.subplots(subplotIdx));
+        ax = subplotInfo.axes;
+        if isempty(ax) || ~isvalid(ax)
+            return;
+        end
+
+        % Axis equality
+        try
+            if subplotInfo.axisEqual
+                axis(ax, 'equal');
+            else
+                axis(ax, 'normal');
+            end
+        catch
+        end
+
+        % Positive limits before enabling log
+        if strcmp(subplotInfo.xScale, 'log')
+            posLim = computePositiveLimits(subplotIdx, 'x');
+            if isempty(posLim)
+                posLim = [1 10];
+            end
+            try
+                xlim(ax, posLim);
+            catch
+            end
+        end
+        if strcmp(subplotInfo.yScale, 'log')
+            posLim = computePositiveLimits(subplotIdx, 'y');
+            if isempty(posLim)
+                posLim = [1 10];
+            end
+            try
+                ylim(ax, posLim);
+            catch
+            end
+        end
+
+        % Axis scales
+        try
+            set(ax, 'XScale', subplotInfo.xScale);
+        catch
+            subplotInfo.xScale = 'linear';
+            set(ax, 'XScale', 'linear');
+        end
+        try
+            set(ax, 'YScale', subplotInfo.yScale);
+        catch
+            subplotInfo.yScale = 'linear';
+            set(ax, 'YScale', 'linear');
+        end
+
+        enforceTickSpacing(subplotIdx);
+        state.subplots(subplotIdx) = subplotInfo;
+    end
+
+    function enforceTickSpacing(subplotIdx)
+        if subplotIdx < 1 || subplotIdx > numel(state.subplots)
+            return;
+        end
+
+        subplotInfo = ensureSubplotStruct(state.subplots(subplotIdx));
+        ax = subplotInfo.axes;
+        if isempty(ax) || ~isvalid(ax)
+            return;
+        end
+
+        applySpacing(subplotInfo.xTickSpacing, 'X');
+        applySpacing(subplotInfo.yTickSpacing, 'Y');
+
+        function applySpacing(spacing, axisPrefix)
+            tickProp = [axisPrefix 'Tick'];
+            modeProp = [tickProp 'Mode'];
+            limProp  = [axisPrefix 'Lim'];
+
+            if isempty(spacing) || ~isfinite(spacing) || spacing <= 0
+                try
+                    set(ax, modeProp, 'auto');
+                catch
+                end
+                return;
+            end
+
+            try
+                lims = get(ax, limProp);
+            catch
+                return;
+            end
+            if numel(lims) ~= 2 || any(~isfinite(lims))
+                return;
+            end
+
+            ticks = lims(1):spacing:lims(2);
+            scale = ternary(axisPrefix == 'X', subplotInfo.xScale, subplotInfo.yScale);
+            if strcmp(scale, 'log')
+                ticks = ticks(ticks > 0);
+            end
+            if numel(ticks) < 2
+                try
+                    set(ax, modeProp, 'auto');
+                catch
+                end
+                return;
+            end
+
+            try
+                set(ax, tickProp, ticks);
+            catch
+                try
+                    set(ax, modeProp, 'auto');
+                catch
+                end
+            end
+        end
+    end
+
+    function lims = computePositiveLimits(subplotIdx, axisName)
+        lims = [];
+        if subplotIdx < 1 || subplotIdx > numel(state.subplots)
+            return;
+        end
+
+        subplotInfo = ensureSubplotStruct(state.subplots(subplotIdx));
+        data = gatherAxisData(subplotInfo, axisName);
+        posData = data(isfinite(data) & data > 0);
+        if isempty(posData)
+            return;
+        end
+
+        lims = [min(posData), max(posData)];
+        if lims(1) == lims(2)
+            lims = lims .* [0.9 1.1];
+        end
+    end
+
+    function data = gatherAxisData(subplotInfo, axisName)
+        data = [];
+        for ln = 1:numel(subplotInfo.lines)
+            if strcmp(axisName, 'x')
+                candidate = subplotInfo.lines(ln).xData;
+            else
+                candidate = getDisplayY(subplotInfo.lines(ln));
+            end
+            if isempty(candidate) || ~isnumeric(candidate)
+                continue;
+            end
+            data = [data, candidate]; %#ok<AGROW>
+        end
+    end
+
+    function yVals = getDisplayY(lineInfo)
+        lineInfo = ensureLineDefaults(lineInfo);
+        if numel(lineInfo) > 1
+            yVals = cell2mat(arrayfun(@(ln) getDisplayY(ln), lineInfo, 'UniformOutput', false));
+            return;
+        end
+
+        baseY = lineInfo.yData;
+        if isempty(baseY) && isfield(lineInfo, 'handle') && isvalid(lineInfo.handle)
+            baseY = safeGetLineData(lineInfo.handle, 'YData');
+            lineInfo.yData = baseY;
+        end
+        if isempty(baseY)
+            yVals = [];
+            return;
+        end
+        yVals = lineInfo.gain .* baseY + lineInfo.offset;
+    end
+
+    function [ok, msg] = canUseLogScale(subplotIdx, axisName, desired)
+        ok = true;
+        msg = '';
+        if nargin < 3
+            desired = 'linear';
+        end
+        if strcmp(desired, 'linear')
+            return;
+        end
+
+        if subplotIdx < 1 || subplotIdx > numel(state.subplots)
+            return;
+        end
+
+        subplotInfo = ensureSubplotStruct(state.subplots(subplotIdx));
+        for ln = 1:numel(subplotInfo.lines)
+            if strcmp(axisName, 'x')
+                data = subplotInfo.lines(ln).xData;
+            else
+                data = getDisplayY(subplotInfo.lines(ln));
+            end
+            if isempty(data)
+                continue;
+            end
+            if ~isnumeric(data)
+                ok = false;
+                msg = 'Log scale requires numeric data.';
+                return;
+            end
+            if any(~isfinite(data) | data <= 0)
+                ok = false;
+                msg = 'Log scale cannot be applied because data has non-positive values.';
+                return;
+            end
+        end
+    end
+
+    function onAxesLimitsChanged(subplotIdx)
+        if subplotIdx < 1 || subplotIdx > numel(state.subplots)
+            return;
+        end
+        enforceTickSpacing(subplotIdx);
+    end
+
+    function attachLimitListeners(axHandle, subplotIdx)
+        if subplotIdx < 1 || subplotIdx > numel(state.subplots)
+            return;
+        end
+
+        subplotInfo = ensureSubplotStruct(state.subplots(subplotIdx));
+        if ~isempty(subplotInfo.limitListeners)
+            try
+                delete(subplotInfo.limitListeners(isvalid(subplotInfo.limitListeners)));
+            catch
+            end
+        end
+        subplotInfo.limitListeners = event.listener.empty;
+
+        if isempty(axHandle) || ~isvalid(axHandle)
+            state.subplots(subplotIdx) = subplotInfo;
+            return;
+        end
+
+        try
+            subplotInfo.limitListeners(end+1) = addlistener(axHandle, 'XLim', 'PostSet', @(~, ~) onAxesLimitsChanged(subplotIdx)); %#ok<AGROW>
+        catch
+        end
+        try
+            subplotInfo.limitListeners(end+1) = addlistener(axHandle, 'YLim', 'PostSet', @(~, ~) onAxesLimitsChanged(subplotIdx)); %#ok<AGROW>
+        catch
+        end
+
+        state.subplots(subplotIdx) = subplotInfo;
     end
 
     function onAxesClicked(axHandle, ~)
@@ -2347,10 +3068,20 @@ refreshWorkspaceControls();
                 dn  = hLine.DisplayName;
                 dnEsc = strrep(dn, '''', '''''');
 
+                yExpr = info.yName;
+                if isfield(info, 'gain') && isfield(info, 'offset')
+                    if info.gain ~= 1
+                        yExpr = sprintf('(%g*(%s))', info.gain, yExpr);
+                    end
+                    if info.offset ~= 0
+                        yExpr = sprintf('(%s + %g)', yExpr, info.offset);
+                    end
+                end
+
                 lineCode = sprintf( ...
                     '%s = plot(ax, %s, %s, ''LineWidth'', %.3g, ''LineStyle'', ''%s'', ''Color'', [%.3g %.3g %.3g], ''DisplayName'', ''%s'');', ...
                     lineVar, ...
-                    info.xName, info.yName, ...
+                    info.xName, yExpr, ...
                     lw, ls, ...
                     col(1), col(2), col(3), dnEsc);
 
@@ -2379,6 +3110,22 @@ refreshWorkspaceControls();
 
             codeLines{end+1} = sprintf('xlim(ax, %s);', arrayToLiteral(axLocal.XLim));
             codeLines{end+1} = sprintf('ylim(ax, %s);', arrayToLiteral(axLocal.YLim));
+
+            codeLines{end+1} = sprintf('set(ax, ''XScale'', ''%s'');', subplotInfo.xScale);
+            codeLines{end+1} = sprintf('set(ax, ''YScale'', ''%s'');', subplotInfo.yScale);
+            if subplotInfo.axisEqual
+                codeLines{end+1} = 'axis(ax,''equal'');';
+            else
+                codeLines{end+1} = 'axis(ax,''normal'');';
+            end
+            if ~isempty(subplotInfo.xTickSpacing) && isfinite(subplotInfo.xTickSpacing) && subplotInfo.xTickSpacing > 0
+                codeLines{end+1} = sprintf('set(ax, ''XTick'', %g:%g:%g);', ...
+                    axLocal.XLim(1), subplotInfo.xTickSpacing, axLocal.XLim(2));
+            end
+            if ~isempty(subplotInfo.yTickSpacing) && isfinite(subplotInfo.yTickSpacing) && subplotInfo.yTickSpacing > 0
+                codeLines{end+1} = sprintf('set(ax, ''YTick'', %g:%g:%g);', ...
+                    axLocal.YLim(1), subplotInfo.yTickSpacing, axLocal.YLim(2));
+            end
 
             legendable = arrayfun(@(ln) isvalid(ln.handle) && ...
                 strcmp(get(ln.handle.Annotation.LegendInformation, 'IconDisplayStyle'), 'on'), ...
