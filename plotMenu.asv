@@ -396,7 +396,7 @@ chkAxisEqual = uicheckbox(axesScaleLayout, ...
 chkAxisEqual.Layout.Row    = 1;
 chkAxisEqual.Layout.Column = [1 4];
 
-lblXTickSpacing = uilabel(axesScaleLayout, 'Text', 'Xtick');
+lblXTickSpacing = uilabel(axesScaleLayout, 'Text', 'Xtick :');
 lblXTickSpacing.Layout.Row    = 2;
 lblXTickSpacing.Layout.Column = 1;
 
