@@ -944,8 +944,21 @@ refreshWorkspaceControls();
     end
 
     function onDerivedFieldEdited(~, ~)
-        % Variable creation is only attempted when the user confirms with Enter.
-        % Avoid evaluating partial input while the user is typing a name or expression.
+        if ~state.derivedMode
+            return;
+        end
+
+        newName = strtrim(edtDerivedName.Value);
+        expr    = strtrim(edtDerivedExpr.Value);
+
+        % Only attempt creation once both fields are filled; ValueChanged only
+        % fires after the user confirms or leaves the field, so we avoid
+        % evaluating partial input while typing.
+        if isempty(newName) || isempty(expr)
+            return;
+        end
+
+        tryCreateDerivedVariable();
     end
 
     function onWindowKeyPressed(~, evt)
@@ -3629,7 +3642,14 @@ refreshWorkspaceControls();
                 continue;
             end
 
-            pos = dt.Position;
+            pos = [];
+            if isprop(dt, 'Position')
+                try
+                    pos = dt.Position;
+                catch
+                end
+            end
+
             if numel(pos) < 2
                 continue;
             end
