@@ -28,7 +28,7 @@ state.subplotRows = 1;
 state.subplotCols = 1;
 state.activeSubplot = 1;
 state.workspaceMeta = struct('name',{},'class',{},'size',{},'isSupportedArray',{},'numel',{},'isIntegerScalar',{},'kind',{},'scalarValue',{});
-state.customYItems  = struct('label',{},'expression',{},'length',{});
+state.customYItems  = struct('label',{},'expression',{},'dimSizes',{});
 
 %% Create main UI
 fig = uifigure( ...
@@ -649,21 +649,19 @@ refreshWorkspaceControls();
     function updateYListForX()
         validateCustomItems();
 
-        arrayMeta = state.workspaceMeta([state.workspaceMeta.isSupportedArray]);
+        xLen   = getSelectedXLength();
+        discovered = discoverBaseCandidates(xLen);
+
         yItems = {};
         yData  = {};
-        xLen   = getSelectedXLength();
 
-        for k = 1:numel(arrayMeta)
-            if ~isempty(xLen) && arrayMeta(k).numel ~= xLen
-                continue;
-            end
-            [yItems, yData] = appendYEntry(yItems, yData, arrayMeta(k).name, arrayMeta(k).name); %#ok<AGROW>
+        for k = 1:numel(discovered)
+            [yItems, yData] = appendYEntry(yItems, yData, discovered(k).label, discovered(k).expression); %#ok<AGROW>
         end
 
         for k = 1:numel(state.customYItems)
             item = state.customYItems(k);
-            if ~isempty(xLen) && ~isempty(item.length) && item.length ~= xLen
+            if ~isempty(xLen) && ~isLengthCompatible(item.dimSizes, xLen)
                 continue;
             end
             [yItems, yData] = appendYEntry(yItems, yData, item.label, item.expression); %#ok<AGROW>
@@ -683,7 +681,7 @@ refreshWorkspaceControls();
     end
 
     function validateCustomItems()
-        validEntries = struct('label',{},'expression',{},'length',{});
+        validEntries = struct('label',{},'expression',{},'dimSizes',{});
         for k = 1:numel(state.customYItems)
             item = state.customYItems(k);
             try
@@ -696,11 +694,279 @@ refreshWorkspaceControls();
                 continue;
             end
 
-            item.length = numel(val);
+            item.dimSizes = size(val);
             validEntries(end+1) = item; %#ok<AGROW>
         end
 
         state.customYItems = validEntries;
+    end
+
+    function tf = isLengthCompatible(dimSizes, xLen)
+        if isempty(xLen)
+            tf = true;
+            return;
+        end
+
+        if isempty(dimSizes)
+            tf = false;
+            return;
+        end
+
+        tf = any(dimSizes == xLen);
+    end
+
+    function candidates = discoverBaseCandidates(xLen)
+        vars        = state.workspaceMeta;
+        integerVars = getIntegerVariables();
+        maxDepth    = 3;
+        maxPerRoot  = 80;
+        maxChildren = 20;
+
+        candidates = struct('label',{},'expression',{},'dimSizes',{});
+        visited = containers.Map('KeyType', 'char', 'ValueType', 'logical');
+        perRootCount = containers.Map('KeyType', 'char', 'ValueType', 'double');
+
+        for k = 1:numel(vars)
+            rootName = vars(k).name;
+            try
+                rootVal = evalin('base', rootName);
+            catch
+                continue;
+            end
+
+            exploreValue(rootVal, rootName, rootName, 0, rootName);
+        end
+
+        function addCandidate(label, expr, dimSizes, rootLabel)
+            if isempty(expr)
+                return;
+            end
+            if isKey(visited, expr)
+                return;
+            end
+
+            if ~isLengthCompatible(dimSizes, xLen)
+                return;
+            end
+
+            currentCount = 0;
+            if isKey(perRootCount, rootLabel)
+                currentCount = perRootCount(rootLabel);
+            end
+            if currentCount >= maxPerRoot
+                return;
+            end
+
+            visited(expr) = true;
+            perRootCount(rootLabel) = currentCount + 1;
+            candidates(end+1) = struct('label', label, 'expression', expr, 'dimSizes', dimSizes); %#ok<AGROW>
+        end
+
+        function exploreValue(val, expr, label, depth, rootLabel)
+            if depth > maxDepth
+                return;
+            end
+
+            kindLocal = classifyValueKind(val);
+
+            if isSupportedArray(val)
+                addCandidate(label, expr, size(val), rootLabel);
+                if depth >= maxDepth
+                    return;
+                end
+            end
+
+            switch kindLocal
+                case 'struct'
+                    if numel(val) > 1
+                        validIdx = filterIntegerIndices(integerVars, numel(val));
+                        for idx = 1:min(numel(validIdx), maxChildren)
+                            idxExpr = validIdx(idx).name;
+                            childExpr = sprintf('%s(%s)', expr, idxExpr);
+                            childLabel = sprintf('%s(%s)', label, idxExpr);
+                            childVal = safeEval(childExpr);
+                            if isempty(childVal)
+                                continue;
+                            end
+                            exploreStruct(childVal, childExpr, childLabel, depth, rootLabel);
+                        end
+                    else
+                        exploreStruct(val, expr, label, depth, rootLabel);
+                    end
+
+                case 'cell'
+                    validIdx = filterIntegerIndices(integerVars, numel(val));
+                    for idx = 1:min(numel(validIdx), maxChildren)
+                        idxExpr = sprintf('{%s}', validIdx(idx).name);
+                        childExpr = sprintf('%s%s', expr, idxExpr);
+                        childLabel = sprintf('%s%s', label, idxExpr);
+                        childVal = safeEval(childExpr);
+                        if isempty(childVal)
+                            continue;
+                        end
+                        exploreValue(childVal, childExpr, childLabel, depth + 1, rootLabel);
+                    end
+
+                case 'table'
+                    tableWidth = width(val);
+                    tableHeight = height(val);
+                    validCols = filterIntegerIndices(integerVars, tableWidth);
+                    validRows = filterIntegerIndices(integerVars, tableHeight);
+
+                    for idx = 1:min(numel(validCols), maxChildren)
+                        idxName = validCols(idx).name;
+                        colExpr = sprintf('%s{:, %s}', expr, idxName);
+                        colLabel = sprintf('%s{:, %s}', label, idxName);
+                        colVal = safeEval(colExpr);
+                        if ~isempty(colVal)
+                            exploreValue(colVal, colExpr, colLabel, depth + 1, rootLabel);
+                        end
+                    end
+
+                    for idx = 1:min(numel(validRows), maxChildren)
+                        idxName = validRows(idx).name;
+                        rowExpr = sprintf('%s{%s, :}', expr, idxName);
+                        rowLabel = sprintf('%s{%s, :}', label, idxName);
+                        rowVal = safeEval(rowExpr);
+                        if ~isempty(rowVal)
+                            exploreValue(rowVal, rowExpr, rowLabel, depth + 1, rootLabel);
+                        end
+                    end
+
+                    if depth < maxDepth
+                        try
+                            colNames = val.Properties.VariableNames;
+                        catch
+                            colNames = {};
+                        end
+                        for c = 1:min(numel(colNames), maxChildren)
+                            colName = colNames{c};
+                            colExpr = sprintf('%s.%s', expr, colName);
+                            colLabel = sprintf('%s.%s', label, colName);
+                            colVal = safeEval(colExpr);
+                            if ~isempty(colVal)
+                                exploreValue(colVal, colExpr, colLabel, depth + 1, rootLabel);
+                            end
+                        end
+                    end
+
+                case 'array'
+                    sz = size(val);
+                    nd = numel(sz);
+                    dimsToUse = 1:min(nd, 3);
+                    for idxVar = 1:min(numel(integerVars), maxChildren)
+                        idxVal = integerVars(idxVar).scalarValue;
+                        if ~isfinite(idxVal)
+                            continue;
+                        end
+                        for d = dimsToUse
+                            if idxVal < 1 || idxVal > sz(d)
+                                continue;
+                            end
+                            subs = repmat({':'}, 1, nd);
+                            subs{d} = integerVars(idxVar).name;
+                            sliceExpr = sprintf('%s(%s)', expr, strjoin(subs, ','));
+                            sliceLabel = sprintf('%s(dim%d=%s)', label, d, integerVars(idxVar).name);
+                            sliceVal = safeEval(sliceExpr);
+                            if ~isempty(sliceVal)
+                                exploreValue(sliceVal, sliceExpr, sliceLabel, depth + 1, rootLabel);
+                            end
+                        end
+                    end
+            end
+        end
+
+        function exploreStruct(val, expr, label, depth, rootLabel)
+            fields = {};
+            try
+                fields = fieldnames(val);
+            catch
+                return;
+            end
+
+            for fIdx = 1:min(numel(fields), maxChildren)
+                fieldName = fields{fIdx};
+                childExpr = sprintf('%s.%s', expr, fieldName);
+                childLabel = sprintf('%s.%s', label, fieldName);
+                childVal = safeEval(childExpr);
+                if isempty(childVal)
+                    continue;
+                end
+                exploreValue(childVal, childExpr, childLabel, depth + 1, rootLabel);
+            end
+        end
+
+        function subset = filterIntegerIndices(intVars, upperBound)
+            mask = arrayfun(@(v) v.scalarValue >= 1 && v.scalarValue <= upperBound, intVars);
+            subset = intVars(mask);
+        end
+
+        function out = safeEval(expr)
+            try
+                out = evalin('base', expr);
+            catch
+                out = [];
+            end
+        end
+    end
+
+    function [sampleDim, isCompat] = findSampleDim(dimSizes, targetLen)
+        sampleDim = [];
+        isCompat  = false;
+        if isempty(targetLen) || isempty(dimSizes)
+            return;
+        end
+
+        matches = find(dimSizes == targetLen, 1);
+        if isempty(matches)
+            return;
+        end
+
+        sampleDim = matches(1);
+        isCompat  = true;
+    end
+
+    function [seriesData, labels] = reshapeSeriesForPlot(yVal, sampleDim, baseLabel)
+        order = [sampleDim, setdiff(1:ndims(yVal), sampleDim)];
+        yReordered = permute(yVal, order);
+        seriesData = reshape(yReordered, size(yReordered, 1), []);
+
+        otherDims = size(yReordered);
+        if isempty(otherDims)
+            otherDims = 1;
+        end
+        otherDims(1) = [];
+        if isempty(otherDims)
+            labels = {baseLabel};
+            return;
+        end
+
+        totalSeries = size(seriesData, 2);
+        if totalSeries == 1
+            labels = {baseLabel};
+            return;
+        end
+
+        labels = cell(1, totalSeries);
+        for sIdx = 1:totalSeries
+            subs = linearToSubs(otherDims, sIdx);
+            if numel(subs) > 1
+                suffix = strjoin(arrayfun(@(s) num2str(s), subs, 'UniformOutput', false), ',');
+            else
+                suffix = num2str(subs);
+            end
+            labels{sIdx} = sprintf('%s (%s)', baseLabel, suffix);
+        end
+    end
+
+    function subs = linearToSubs(dims, idx)
+        if isempty(dims)
+            subs = 1;
+            return;
+        end
+        cells = cell(1, numel(dims));
+        [cells{:}] = ind2sub(dims, idx);
+        subs = cellfun(@(c) c, cells);
     end
 
     function len = getSelectedXLength()
@@ -728,9 +994,9 @@ refreshWorkspaceControls();
         btnPlot.Enable = ternary(hasX && hasY, 'on', 'off');
     end
 
-    function addCustomYItem(label, expr, len)
+    function addCustomYItem(label, expr, dimSizes)
         if nargin < 3
-            len = [];
+            dimSizes = [];
         end
 
         % Drop existing entries that rely on the same expression
@@ -740,7 +1006,7 @@ refreshWorkspaceControls();
         end
         state.customYItems = state.customYItems(keepMask);
 
-        state.customYItems(end+1) = struct('label', label, 'expression', expr, 'length', len); %#ok<AGROW>
+        state.customYItems(end+1) = struct('label', label, 'expression', expr, 'dimSizes', dimSizes); %#ok<AGROW>
     end
 
     function integers = getIntegerVariables()
@@ -833,14 +1099,6 @@ refreshWorkspaceControls();
         edtIndexValue.Layout.Row    = 4;
         edtIndexValue.Layout.Column = 2;
 
-        lblIndexVars = uilabel(detailGrid, 'Text', 'Or pick integer from workspace:', 'Visible', 'off');
-        lblIndexVars.Layout.Row    = 5;
-        lblIndexVars.Layout.Column = 1;
-        ddIndexVars = uidropdown(detailGrid, 'Items', {'<none>'}, 'ItemsData', {''}, ...
-            'Visible', 'off', 'Value', '');
-        ddIndexVars.Layout.Row    = 5;
-        ddIndexVars.Layout.Column = 2;
-
         lblPopupStatus = uilabel(detailGrid, 'Text', ' ', 'WordWrap', 'on', 'Visible', 'off', ...
             'FontColor', [0.1 0.5 0.1]);
         lblPopupStatus.Layout.Row    = 6;
@@ -856,17 +1114,10 @@ refreshWorkspaceControls();
         btnClose.Layout.Row    = 3;
         btnClose.Layout.Column = [1 2];
 
-        integerVars = getIntegerVariables();
-        idxItems = ['<none>', arrayfun(@(v) sprintf('%s (%g)', v.name, v.scalarValue), integerVars, 'UniformOutput', false)];
-        idxData  = [{''}, arrayfun(@(v) v.name, integerVars, 'UniformOutput', false)];
-        ddIndexVars.Items     = idxItems;
-        ddIndexVars.ItemsData = idxData;
-
         currentMeta = [];
         currentNode = [];
 
         lstContainers.ValueChangedFcn = @onContainerChanged;
-        ddIndexVars.ValueChangedFcn   = @onIndexVarChanged;
         btnAddFromOther.ButtonPushedFcn = @onAddFromOther;
 
         if ~isempty(lstContainers.ItemsData)
@@ -1080,8 +1331,6 @@ refreshWorkspaceControls();
             end
             lblIndexValue.Visible = flag;
             edtIndexValue.Visible = flag;
-            lblIndexVars.Visible  = flag;
-            ddIndexVars.Visible   = flag;
 
             lblIndexMode.Visible = flag && includeMode;
             ddIndexMode.Visible  = flag && includeMode;
@@ -1091,20 +1340,7 @@ refreshWorkspaceControls();
             btnAddFromOther.Enable = 'off';
             lblPopupStatus.Visible = 'off';
             showIndexControls(false, false);
-            ddIndexVars.Value = '';
             edtIndexValue.Value = '';
-        end
-
-        function onIndexVarChanged(~, ~)
-            idxVarName = ddIndexVars.Value;
-            if isempty(idxVarName)
-                return;
-            end
-
-            match = find(strcmp(idxData, idxVarName), 1);
-            if ~isempty(match) && match > 1
-                edtIndexValue.Value = num2str(integerVars(match-1).scalarValue);
-            end
         end
 
         function idxStr = getIndexString(kind)
@@ -1112,12 +1348,6 @@ refreshWorkspaceControls();
                 kind = '';
             end
             idxStr = '';
-            idxVarName = ddIndexVars.Value;
-            if ~isempty(idxVarName)
-                idxStr = idxVarName;
-                return;
-            end
-
             raw = strtrim(edtIndexValue.Value);
             if isempty(raw)
                 return;
@@ -1281,13 +1511,13 @@ refreshWorkspaceControls();
                 return;
             end
 
-            if ~isempty(xLenLocal) && numel(candidateVal(:)) ~= xLenLocal
-                setStatus(sprintf('Length mismatch: X has %d elements but selection has %d.', ...
-                    xLenLocal, numel(candidateVal(:))), true);
+            if ~isempty(xLenLocal) && ~isLengthCompatible(size(candidateVal), xLenLocal)
+                setStatus(sprintf(['Length mismatch: X has %d elements but no dimension of the selection matches ' ...
+                    '(%s).'], xLenLocal, sizeToString(size(candidateVal))), true);
                 return;
             end
 
-            addCustomYItem(label, expr, numel(candidateVal(:)));
+            addCustomYItem(label, expr, size(candidateVal));
             updateYListForX();
             if ~isempty(lbYVar.ItemsData)
                 lbYVar.Value = {lbYVar.ItemsData{end}};
@@ -1396,36 +1626,39 @@ refreshWorkspaceControls();
                 continue;
             end
 
-            yFlat = yVal(:);
-            if numel(xFlat) ~= numel(yFlat)
+            [sampleDim, isCompat] = findSampleDim(size(yVal), numel(xFlat));
+            if ~isCompat
                 uialert(fig, sprintf( ...
-                    'X (%s) and Y (%s) have different number of elements (%d vs %d). Skipping "%s".', ...
-                    xName, yLabel, numel(xFlat), numel(yFlat), yLabel), ...
+                    'X (%s) length is %d but no dimension of Y (%s) matches [%s].', ...
+                    xName, numel(xFlat), yLabel, sizeToString(size(yVal))), ...
                     'Size mismatch');
                 continue;
             end
 
-            % Plot with default style
-            hLine = plot(targetAx, xFlat, yFlat, ...
-                'LineWidth',   1.5, ...
-                'LineStyle',   '-', ...
-                'DisplayName', yLabel);
+            [ySeries, seriesLabels] = reshapeSeriesForPlot(yVal, sampleDim, yLabel);
 
-            wireLineInteractivity(hLine);
+            for sIdx = 1:size(ySeries, 2)
+                hLine = plot(targetAx, xFlat, ySeries(:, sIdx), ...
+                    'LineWidth',   1.5, ...
+                    'LineStyle',   '-', ...
+                    'DisplayName', seriesLabels{sIdx});
 
-            lineInfo         = struct();
-            lineInfo.handle  = hLine;
-            lineInfo.xName   = xName;
-            lineInfo.yName   = yExpr;
-            lineInfo.legend  = true;
-            lineInfo.datatips = zeros(0, 2);
+                wireLineInteractivity(hLine);
 
-            set(hLine.Annotation.LegendInformation, 'IconDisplayStyle', 'on');
+                lineInfo         = struct();
+                lineInfo.handle  = hLine;
+                lineInfo.xName   = xName;
+                lineInfo.yName   = yExpr;
+                lineInfo.legend  = true;
+                lineInfo.datatips = zeros(0, 2);
 
-            subplotInfo.lines(end+1) = lineInfo; %#ok<AGROW>
+                set(hLine.Annotation.LegendInformation, 'IconDisplayStyle', 'on');
 
-            anyPlotted        = true;
-            newLineHandles{end+1} = hLine; %#ok<AGROW>
+                subplotInfo.lines(end+1) = lineInfo; %#ok<AGROW>
+
+                anyPlotted        = true;
+                newLineHandles{end+1} = hLine; %#ok<AGROW>
+            end
         end
 
         hold(targetAx, 'off');
