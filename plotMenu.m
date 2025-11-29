@@ -59,11 +59,18 @@ subplotLayout = uigridlayout(subplotPanel, [2 1]);
 subplotLayout.RowHeight   = {'fit', 'fit'};
 subplotLayout.BackgroundColor = [1 1 1];
 
-btnLayoutMenu = uibutton(subplotLayout, ...
-    'Text', 'Choose layout', ...
-    'ButtonPushedFcn', @onLayoutMenuPressed);
-btnLayoutMenu.Layout.Row    = 1;
-btnLayoutMenu.Layout.Column = 1;
+layoutOptions = [1 1; 1 2; 2 1; 2 2; 2 3; 3 2; 3 3; 4 4];
+layoutItems   = arrayfun(@(idx) sprintf('%d x %d', layoutOptions(idx, 1), layoutOptions(idx, 2)), ...
+    1:size(layoutOptions, 1), 'UniformOutput', false);
+layoutItemsData = num2cell(layoutOptions, 2);
+
+ddLayoutMenu = uidropdown(subplotLayout, ...
+    'Items', layoutItems, ...
+    'ItemsData', layoutItemsData, ...
+    'Value', layoutItemsData{1}, ...
+    'ValueChangedFcn', @onLayoutSelectionChanged);
+ddLayoutMenu.Layout.Row    = 1;
+ddLayoutMenu.Layout.Column = 1;
 lblLayoutSummary = uilabel(subplotLayout, ...
     'Text', 'Layout: 1 x 1', ...
     'HorizontalAlignment', 'center');
@@ -366,7 +373,7 @@ chkAxisEqual = uicheckbox(axesScaleLayout, ...
 chkAxisEqual.Layout.Row    = 1;
 chkAxisEqual.Layout.Column = [1 4];
 
-lblXTickSpacing = uilabel(axesScaleLayout, 'Text', 'X tick \u0394:');
+lblXTickSpacing = uilabel(axesScaleLayout, 'Text', 'X tick spacing:');
 lblXTickSpacing.Layout.Row    = 2;
 lblXTickSpacing.Layout.Column = 1;
 
@@ -382,7 +389,7 @@ btnAutoXTicks = uibutton(axesScaleLayout, ...
 btnAutoXTicks.Layout.Row    = 2;
 btnAutoXTicks.Layout.Column = 4;
 
-lblYTickSpacing = uilabel(axesScaleLayout, 'Text', 'Y tick \u0394:');
+lblYTickSpacing = uilabel(axesScaleLayout, 'Text', 'Y tick spacing:');
 lblYTickSpacing.Layout.Row    = 3;
 lblYTickSpacing.Layout.Column = 1;
 
@@ -507,7 +514,7 @@ refreshWorkspaceControls();
             cIdx = mod(idx-1, cols) + 1;
 
             if idx <= newCount
-                if isempty(subplotInfo.axes) || ~isvalid(subplotInfo.axes)
+                if ~isValidAxesHandle(subplotInfo.axes)
                     axLocal = uiaxes(centerLayout);
                     axLocal.Layout.Row    = rIdx;
                     axLocal.Layout.Column = cIdx;
@@ -532,7 +539,7 @@ refreshWorkspaceControls();
                 restoreLineDatatips(idx);
             else
                 subplotInfo = captureSubplotState(idx);
-                if isfield(subplotInfo, 'axes') && isvalid(subplotInfo.axes)
+                if isfield(subplotInfo, 'axes') && isValidAxesHandle(subplotInfo.axes)
                     delete(subplotInfo.axes);
                 end
                 if isfield(subplotInfo, 'limitListeners') && ~isempty(subplotInfo.limitListeners)
@@ -551,15 +558,36 @@ refreshWorkspaceControls();
         state.subplotRows   = rows;
         state.subplotCols   = cols;
         state.activeSubplot = min(state.activeSubplot, newCount);
+        syncLayoutDropdown(rows, cols);
         lblLayoutSummary.Text = sprintf('Layout: %d x %d', rows, cols);
 
         setActiveSubplot(state.activeSubplot);
     end
 
+    function tf = isValidAxesHandle(ax)
+        tf = ~isempty(ax) && isgraphics(ax) && isvalid(ax);
+    end
+
+    function syncLayoutDropdown(rows, cols)
+        if isempty(ddLayoutMenu) || ~isvalid(ddLayoutMenu)
+            return;
+        end
+
+        match = find(layoutOptions(:, 1) == rows & layoutOptions(:, 2) == cols, 1);
+        if isempty(match) || match > numel(layoutItemsData)
+            return;
+        end
+
+        desired = layoutItemsData{match};
+        if ~isequal(ddLayoutMenu.Value, desired)
+            ddLayoutMenu.Value = desired;
+        end
+    end
+
     function subplotInfo = captureSubplotState(idx)
         subplotInfo = ensureSubplotStruct(state.subplots(idx));
         axLocal = subplotInfo.axes;
-        if ~isempty(axLocal) && isvalid(axLocal)
+        if isValidAxesHandle(axLocal)
             subplotInfo.titleText  = axLocal.Title.String;
             subplotInfo.xLabelText = axLocal.XLabel.String;
             subplotInfo.yLabelText = axLocal.YLabel.String;
@@ -598,7 +626,7 @@ refreshWorkspaceControls();
             subplotInfo = ensureSubplotStruct(state.subplots(idx));
         end
         axLocal = subplotInfo.axes;
-        if isempty(axLocal) || ~isvalid(axLocal)
+        if ~isValidAxesHandle(axLocal)
             return;
         end
 
@@ -638,7 +666,7 @@ refreshWorkspaceControls();
         end
         subplotInfo = ensureSubplotStruct(state.subplots(idx));
         axLocal = subplotInfo.axes;
-        if isempty(axLocal) || ~isvalid(axLocal)
+        if ~isValidAxesHandle(axLocal)
             return;
         end
 
@@ -666,7 +694,7 @@ refreshWorkspaceControls();
         end
         subplotInfo = ensureSubplotStruct(state.subplots(idx));
         axLocal = subplotInfo.axes;
-        if isempty(axLocal) || ~isvalid(axLocal)
+        if ~isValidAxesHandle(axLocal)
             return;
         end
 
@@ -714,7 +742,7 @@ refreshWorkspaceControls();
         state.subplots(idx) = ensureSubplotStruct(state.subplots(idx));
         ax = state.subplots(idx).axes;
 
-        if ~isempty(ax) && isvalid(ax)
+        if isValidAxesHandle(ax)
             wireAxesInteractivity(ax);
             ensureLineInteractivity(state.subplots(idx).lines);
             applyLineTransformsForSubplot(idx);
@@ -732,7 +760,7 @@ refreshWorkspaceControls();
         syncAxesControlsFromSubplot();
 
         % Sync axes text fields with the selected subplot
-        if ~isempty(ax) && isvalid(ax)
+        if isValidAxesHandle(ax)
             edtTitle.Value  = ax.Title.String;
             edtXLabel.Value = ax.XLabel.String;
             edtYLabel.Value = ax.YLabel.String;
@@ -790,39 +818,24 @@ refreshWorkspaceControls();
         syncStyleWithSelectedLine();
     end
 
-    function onLayoutMenuPressed(~, ~)
-        layoutOptions = [1 1; 1 2; 2 1; 2 2; 2 3; 3 2; 3 3; 4 4];
-        dlg = uifigure('Name', 'Choose layout', ...
-            'WindowStyle', 'modal', ...
-            'Position', [fig.Position(1)+80, fig.Position(2)+80, 260, 220]);
-
-        gridRows = ceil(numel(layoutOptions(:,1)) / 3);
-        dlgGrid = uigridlayout(dlg, [gridRows, 3]);
-        dlgGrid.RowHeight   = repmat({50}, 1, gridRows);
-        dlgGrid.ColumnWidth = repmat({80}, 1, 3);
-
-        currentLayout = [state.subplotRows, state.subplotCols];
-        for optIdx = 1:size(layoutOptions, 1)
-            r = layoutOptions(optIdx, 1);
-            c = layoutOptions(optIdx, 2);
-            btn = uibutton(dlgGrid, ...
-                'Text', sprintf('%d x %d', r, c), ...
-                'ButtonPushedFcn', @(~, ~) selectLayout(r, c));
-            btn.Layout.Row    = ceil(optIdx / 3);
-            btn.Layout.Column = mod(optIdx-1, 3) + 1;
-            if isequal(currentLayout, [r c])
-                btn.FontWeight = 'bold';
-                btn.BackgroundColor = [0.9 0.95 1];
-            end
+    function onLayoutSelectionChanged(src, ~)
+        if isempty(src.Value)
+            return;
         end
 
-        function selectLayout(r, c)
-            applySubplotGrid(r, c);
-            try
-                delete(dlg);
-            catch
-            end
+        selection = src.Value;
+        if numel(selection) < 2
+            return;
         end
+
+        rows = selection(1);
+        cols = selection(2);
+
+        if rows == state.subplotRows && cols == state.subplotCols
+            return;
+        end
+
+        applySubplotGrid(rows, cols);
     end
 
     function onSubplotSuperposeChanged(~, ~)
@@ -835,7 +848,7 @@ refreshWorkspaceControls();
         end
 
         subplotInfo = state.subplots(idx);
-        if isfield(subplotInfo, 'axes') && isvalid(subplotInfo.axes)
+        if isfield(subplotInfo, 'axes') && isValidAxesHandle(subplotInfo.axes)
             cla(subplotInfo.axes);
             title(subplotInfo.axes, '');
             xlabel(subplotInfo.axes, '');
@@ -865,10 +878,10 @@ refreshWorkspaceControls();
     end
 
     function onCreateDerivedVariable(~, ~)
-        refreshWorkspaceControls();
-        varNames = {state.workspaceMeta.name};
-        if isempty(varNames)
-            varNames = {''};
+        [varLabels, varExpressions] = getDerivedVariableChoices();
+        if isempty(varLabels)
+            varLabels      = {'<no available variables>'};
+            varExpressions = {''};
         end
 
         dlg = uifigure('Name', 'Create derived variable', ...
@@ -889,9 +902,10 @@ refreshWorkspaceControls();
         edtExpression.Layout.Row    = 2;
         edtExpression.Layout.Column = 2;
 
-        uilabel(dlgLayout, 'Text', 'Workspace variables:', 'HorizontalAlignment', 'right');
+        uilabel(dlgLayout, 'Text', 'Plot variables:', 'HorizontalAlignment', 'right');
         lstVars = uilistbox(dlgLayout, ...
-            'Items', varNames, ...
+            'Items', varLabels, ...
+            'ItemsData', varExpressions, ...
             'Multiselect', 'off', ...
             'ValueChangedFcn', @(src, ~) appendVariable(src));
         lstVars.Layout.Row    = 3;
@@ -909,6 +923,12 @@ refreshWorkspaceControls();
 
         function appendVariable(src)
             val = src.Value;
+            if iscell(val)
+                val = val{1};
+            end
+            if isstring(val)
+                val = char(val);
+            end
             if isempty(val)
                 return;
             end
@@ -951,6 +971,42 @@ refreshWorkspaceControls();
             try
                 delete(dlg);
             catch
+            end
+        end
+
+        function [labels, expressions] = getDerivedVariableChoices()
+            labels      = {};
+            expressions = {};
+
+            xName = ddXVar.Value;
+            if ~isempty(xName) && ~strcmp(xName, '<select X>') && ~strcmp(xName, '<no valid arrays>')
+                labels{end+1}      = sprintf('X: %s', xName); %#ok<AGROW>
+                expressions{end+1} = char(string(xName)); %#ok<AGROW>
+            end
+
+            yLabels = lbYVar.Items;
+            yData   = lbYVar.ItemsData;
+            if ischar(yLabels) || isstring(yLabels)
+                yLabels = cellstr(yLabels);
+            end
+
+            for yIdx = 1:numel(yLabels)
+                expr = '';
+                if numel(yData) >= yIdx
+                    dataEntry = yData{yIdx};
+                    if isstruct(dataEntry) && isfield(dataEntry, 'expression')
+                        expr = dataEntry.expression;
+                    else
+                        expr = char(string(dataEntry));
+                    end
+                end
+
+                if isempty(expr) || any(strcmp(expressions, expr))
+                    continue;
+                end
+
+                labels{end+1}      = yLabels{yIdx}; %#ok<AGROW>
+                expressions{end+1} = expr; %#ok<AGROW>
             end
         end
     end
@@ -2797,7 +2853,7 @@ refreshWorkspaceControls();
             axHandle = state.subplots(state.activeSubplot).axes;
         end
 
-        if isempty(axHandle) || ~isvalid(axHandle)
+        if ~isValidAxesHandle(axHandle)
             return;
         end
 
@@ -2838,7 +2894,7 @@ refreshWorkspaceControls();
 
         subplotInfo = ensureSubplotStruct(state.subplots(subplotIdx));
         ax = subplotInfo.axes;
-        if isempty(ax) || ~isvalid(ax)
+        if ~isValidAxesHandle(ax)
             return;
         end
 
@@ -2899,7 +2955,7 @@ refreshWorkspaceControls();
 
         subplotInfo = ensureSubplotStruct(state.subplots(subplotIdx));
         ax = subplotInfo.axes;
-        if isempty(ax) || ~isvalid(ax)
+        if ~isValidAxesHandle(ax)
             return;
         end
 
@@ -3047,7 +3103,7 @@ refreshWorkspaceControls();
             return;
         end
         subplotInfo = ensureSubplotStruct(state.subplots(subplotIdx));
-        if ~isempty(subplotInfo.axes) && isvalid(subplotInfo.axes)
+        if isValidAxesHandle(subplotInfo.axes)
             try
                 subplotInfo.xLim = subplotInfo.axes.XLim;
                 subplotInfo.yLim = subplotInfo.axes.YLim;
@@ -3072,7 +3128,7 @@ refreshWorkspaceControls();
         end
         subplotInfo.limitListeners = event.listener.empty;
 
-        if isempty(axHandle) || ~isvalid(axHandle)
+        if ~isValidAxesHandle(axHandle)
             state.subplots(subplotIdx) = subplotInfo;
             return;
         end
@@ -3090,7 +3146,7 @@ refreshWorkspaceControls();
     end
 
     function onAxesClicked(axHandle, ~)
-        if isempty(axHandle) || ~isvalid(axHandle)
+        if ~isValidAxesHandle(axHandle)
             return;
         end
 
@@ -3106,7 +3162,7 @@ refreshWorkspaceControls();
         end
 
         axHandle = ancestor(graphObj, 'axes');
-        if isempty(axHandle) || ~isvalid(axHandle)
+        if ~isValidAxesHandle(axHandle)
             return;
         end
 
@@ -3239,7 +3295,7 @@ refreshWorkspaceControls();
     end
 
     function dtObjects = findDatatipObjects(axHandle)
-        if nargin < 1 || isempty(axHandle) || ~isvalid(axHandle)
+        if nargin < 1 || ~isValidAxesHandle(axHandle)
             dtObjects = gobjects(0, 1);
             return;
         end
@@ -3284,7 +3340,7 @@ refreshWorkspaceControls();
 
         subplotInfo = state.subplots(subplotIdx);
         axLocal = subplotInfo.axes;
-        if isempty(axLocal) || ~isvalid(axLocal)
+        if ~isValidAxesHandle(axLocal)
             return;
         end
 
@@ -3328,8 +3384,37 @@ refreshWorkspaceControls();
         state.subplots(subplotIdx) = subplotInfo;
     end
 
+    function tips = normalizeDatatipsForExport(lineInfo)
+        lineInfo = ensureLineDefaults(lineInfo);
+        tips = lineInfo.datatips;
+        if isempty(tips)
+            tips = struct('dataIndex', {}, 'position', {});
+            return;
+        end
+
+        xVals = lineInfo.xData;
+        if isempty(xVals) && isfield(lineInfo, 'handle') && ~isempty(lineInfo.handle) && isvalid(lineInfo.handle)
+            xVals = safeGetLineData(lineInfo.handle, 'XData');
+        end
+
+        yVals = getDisplayY(lineInfo);
+        if isempty(yVals) && isfield(lineInfo, 'handle') && ~isempty(lineInfo.handle) && isvalid(lineInfo.handle)
+            yVals = safeGetLineData(lineInfo.handle, 'YData');
+        end
+
+        for t = 1:numel(tips)
+            if (~isfield(tips(t), 'position') || numel(tips(t).position) < 2) && ...
+                    isfield(tips(t), 'dataIndex') && ~isempty(tips(t).dataIndex)
+                idx = round(tips(t).dataIndex);
+                if idx >= 1 && idx <= numel(xVals) && idx <= numel(yVals)
+                    tips(t).position = [xVals(idx), yVals(idx)];
+                end
+            end
+        end
+    end
+
     function wireAxesInteractivity(axHandle)
-        if isempty(axHandle) || ~isvalid(axHandle)
+        if ~isValidAxesHandle(axHandle)
             return;
         end
 
@@ -3553,24 +3638,21 @@ refreshWorkspaceControls();
                     continue;
                 end
 
-                tipEntries = [];
-                if isfield(subplotInfo.lines(dtIdx), 'datatips')
-                    tipEntries = subplotInfo.lines(dtIdx).datatips;
-                end
+                tipEntries = normalizeDatatipsForExport(subplotInfo.lines(dtIdx));
                 if isempty(tipEntries)
                     continue;
                 end
 
                 for tipRow = 1:numel(tipEntries)
                     entry = tipEntries(tipRow);
-                    if ~isempty(entry.dataIndex) && isfinite(entry.dataIndex)
+                    if isfield(entry, 'dataIndex') && ~isempty(entry.dataIndex) && isfinite(entry.dataIndex)
                         codeLines{end+1} = sprintf('try, datatip(%s, ''DataIndex'', %d); end', lineVarNames{dtIdx}, round(entry.dataIndex)); %#ok<AGROW>
                         continue;
                     end
-                    pos = entry.position;
-                    if numel(pos) < 2
+                    if ~isfield(entry, 'position') || numel(entry.position) < 2
                         continue;
                     end
+                    pos = entry.position;
                     xTip = valueToLiteral(pos(1));
                     yTip = valueToLiteral(pos(2));
                     codeLines{end+1} = sprintf('try, datatip(%s, %s, %s); end', lineVarNames{dtIdx}, xTip, yTip); %#ok<AGROW>
