@@ -35,13 +35,14 @@ state.datatipMode   = false;
 state.derivedMode   = false;
 state.derivedChoices = struct('label',{},'expression',{});
 state.originalYBackground = [];
+maximizeTimer = [];
 
 %% Create main UI
 fig = uifigure( ...
     'Name',     'Plot Menu', ...
     'Position', [100 100 1400 800], ...
     'Color',    [1 1 1]);
-fig.WindowState = 'maximized';
+scheduleInitialMaximize();
 fig.WindowKeyPressFcn = @onWindowKeyPressed;
 
 mainLayout = uigridlayout(fig, [1 3]);
@@ -1146,6 +1147,33 @@ refreshWorkspaceControls();
         end
     end
 
+    function scheduleInitialMaximize()
+        if ~isempty(maximizeTimer) && isvalid(maximizeTimer)
+            stop(maximizeTimer);
+            delete(maximizeTimer);
+        end
+
+        maximizeTimer = timer('StartDelay', 1, ...
+            'ExecutionMode', 'singleShot', ...
+            'TimerFcn', @applyInitialMaximize);
+        start(maximizeTimer);
+    end
+
+    function applyInitialMaximize(~, ~)
+        if isvalid(fig)
+            try
+                fig.WindowState = 'maximized';
+            catch
+            end
+        end
+
+        if ~isempty(maximizeTimer) && isvalid(maximizeTimer)
+            maximizeTimer.stop;
+            delete(maximizeTimer);
+        end
+        maximizeTimer = [];
+    end
+
     function restoreDerivedOverrides(overrides)
         for idx = 1:numel(overrides)
             try
@@ -1217,8 +1245,10 @@ refreshWorkspaceControls();
 
         xName = ddXVar.Value;
         if ~isempty(xName) && ~strcmp(xName, '<select X>') && ~strcmp(xName, '<no valid arrays>')
+            xLen = getSelectedXLength();
+            xSize = getSelectedXSize();
+            expressions{end+1} = ensureColumnExpression(char(string(xName)), xSize, xLen); %#ok<AGROW>
             labels{end+1}      = sprintf('X: %s', xName); %#ok<AGROW>
-            expressions{end+1} = char(string(xName)); %#ok<AGROW>
         end
 
         yLabels = lbYVar.Items;
@@ -1547,7 +1577,8 @@ refreshWorkspaceControls();
         yData  = {};
 
         for k = 1:numel(discovered)
-            [yItems, yData] = appendYEntry(yItems, yData, discovered(k).label, discovered(k).expression); %#ok<AGROW>
+            orientedExpr = ensureColumnExpression(discovered(k).expression, discovered(k).dimSizes, xLen);
+            [yItems, yData] = appendYEntry(yItems, yData, discovered(k).label, orientedExpr); %#ok<AGROW>
         end
 
         for k = 1:numel(state.customYItems)
@@ -1555,7 +1586,8 @@ refreshWorkspaceControls();
             if ~isempty(xLen) && ~isLengthCompatible(item.dimSizes, xLen)
                 continue;
             end
-            [yItems, yData] = appendYEntry(yItems, yData, item.label, item.expression); %#ok<AGROW>
+            orientedExpr = ensureColumnExpression(item.expression, item.dimSizes, xLen);
+            [yItems, yData] = appendYEntry(yItems, yData, item.label, orientedExpr); %#ok<AGROW>
         end
 
         lbYVar.Items     = yItems;
@@ -1817,6 +1849,26 @@ refreshWorkspaceControls();
         isCompat  = true;
     end
 
+    function expr = ensureColumnExpression(expr, dimSizes, targetLen)
+        if nargin < 2
+            dimSizes = [];
+        end
+        if nargin < 3
+            targetLen = [];
+        end
+
+        if isempty(targetLen) || isempty(dimSizes)
+            return;
+        end
+
+        [sampleDim, isCompat] = findSampleDim(dimSizes, targetLen);
+        if ~isCompat || sampleDim == 1
+            return;
+        end
+
+        expr = sprintf('(%s)''', char(string(expr)));
+    end
+
     function [seriesData, labels, seriesSubs] = reshapeSeriesForPlot(yVal, sampleDim, baseLabel)
         order = [sampleDim, setdiff(1:ndims(yVal), sampleDim)];
         yReordered = permute(yVal, order);
@@ -1910,6 +1962,25 @@ refreshWorkspaceControls();
 
         try
             len = numel(evalin('base', xName));
+        catch
+        end
+    end
+
+    function sz = getSelectedXSize()
+        sz = [];
+        xName = ddXVar.Value;
+        if strcmp(xName, '<select X>') || strcmp(xName, '<no valid arrays>') || isempty(xName)
+            return;
+        end
+
+        idx = find(strcmp({state.workspaceMeta.name}, xName), 1);
+        if ~isempty(idx)
+            sz = state.workspaceMeta(idx).size;
+            return;
+        end
+
+        try
+            sz = size(evalin('base', xName));
         catch
         end
     end
