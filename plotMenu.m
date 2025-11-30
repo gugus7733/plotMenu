@@ -733,16 +733,35 @@ refreshWorkspaceControls();
             end
         end
         
+        
+        % Special handling for dropdown menus (uidropdown) to improve contrast
         for h = appStateLocal.allLists(:)'
             if ~isgraphics(h)
                 continue;
             end
-            if isprop(h, 'BackgroundColor')
-                h.BackgroundColor = th.bgControl;
+            
+            % Check if this is a uidropdown (popup menu) vs uilistbox
+            isDropdown = isa(h, 'matlab.ui.control.DropDown');
+            
+            if isDropdown && isequal(th, appStateLocal.themeDark)
+                % In dark mode, use high-contrast colors for dropdowns
+                % Light background with dark text for better readability
+                if isprop(h, 'BackgroundColor')
+                    h.BackgroundColor = [0.85 0.85 0.85];  % Light grey background
+                end
+                if isprop(h, 'FontColor')
+                    h.FontColor = [0 0 0];  % Black text
+                end
+            else
+                % Light mode or listboxes: use standard theme colors
+                if isprop(h, 'BackgroundColor')
+                    h.BackgroundColor = th.bgControl;
+                end
+                if isprop(h, 'FontColor')
+                    h.FontColor = th.fgText;
+                end
             end
-            if isprop(h, 'FontColor')
-                h.FontColor = th.fgText;
-            end
+            
             if isprop(h, 'FontName')
                 h.FontName = fontUi.fontName;
             end
@@ -750,6 +769,7 @@ refreshWorkspaceControls();
                 h.FontSize = fontUi.fontSizeBase;
             end
         end
+        
         
         for h = appStateLocal.allSliders(:)'
             if ~isgraphics(h)
@@ -4155,8 +4175,8 @@ refreshWorkspaceControls();
                 'YColor', boxColor, ...
                 'GridColor', [0.15 0.15 0.15], ...
                 'MinorGridColor', [0.70 0.70 0.70], ...
-                'FontName', themeLight.fontName, ...
-                'FontSize', themeLight.fontSizeSmall, ...
+                'FontName', fontFigure.fontName, ...
+                'FontSize', fontFigure.fontSize, ...
                 'Box', 'on', ...
                 'LineWidth', lineWidth);
             grid(ax, 'on');
