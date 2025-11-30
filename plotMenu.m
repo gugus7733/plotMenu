@@ -139,10 +139,31 @@ edtDerivedExpr = uieditfield(derivedRow, 'text', ...
 edtDerivedExpr.Layout.Row    = 1;
 edtDerivedExpr.Layout.Column = 3;
 
-btnPlot = uibutton(leftLayout, ...
+actionsPanel = uipanel(leftLayout, 'Title', 'Plot actions', 'BackgroundColor', [1 1 1]);
+actionsPanel.Layout.Row    = 12;
+actionsPanel.Layout.Column = 1;
+
+actionsLayout = uigridlayout(actionsPanel, [3 1]);
+actionsLayout.RowHeight = {'fit', 'fit', 'fit'};
+actionsLayout.ColumnWidth = {'1x'};
+
+chkSubplotSuperpose = uicheckbox(actionsLayout, ...
+    'Text',  'Hold on / Superpose', ...
+    'Value', false, ...
+    'ValueChangedFcn', @onSubplotSuperposeChanged);
+chkSubplotSuperpose.Layout.Row    = 1;
+chkSubplotSuperpose.Layout.Column = 1;
+
+btnClear = uibutton(actionsLayout, ...
+    'Text',          'Clear selected subplot', ...
+    'ButtonPushedFcn', @onClearPlot);
+btnClear.Layout.Row    = 2;
+btnClear.Layout.Column = 1;
+
+btnPlot = uibutton(actionsLayout, ...
     'Text',          'Plot selected', ...
     'ButtonPushedFcn', @onPlot);
-btnPlot.Layout.Row    = 12;
+btnPlot.Layout.Row    = 3;
 btnPlot.Layout.Column = 1;
 
 %% Center panel: axes
@@ -324,8 +345,8 @@ axesPanel = uipanel(rightLayout, 'Title', 'Axes properties', 'BackgroundColor', 
 axesPanel.Layout.Row    = 2;
 axesPanel.Layout.Column = 1;
 
-axesLayout = uigridlayout(axesPanel, [15 2]);
-axesLayout.RowHeight   = {20, 30, 20, 30, 20, 30, 30, 20, 30, 20, 110, 20, 30, 30, '1x'};
+axesLayout = uigridlayout(axesPanel, [12 2]);
+axesLayout.RowHeight   = {20, 30, 20, 30, 20, 30, 30, 20, 30, 20, 110, '1x'};
 axesLayout.ColumnWidth = {100, '1x'};
 
 lblTitle = uilabel(axesLayout, 'Text', 'Title:');
@@ -449,24 +470,6 @@ ddYScale = uidropdown(axesScaleLayout, ...
     'ValueChangedFcn', @(src, ~) onAxisScaleChanged(src, 'y'));
 ddYScale.Layout.Row    = 4;
 ddYScale.Layout.Column = 4;
-
-lblActiveSubplot = uilabel(axesLayout, ...
-    'Text', 'Active subplot: (1,1)');
-lblActiveSubplot.Layout.Row    = 12;
-lblActiveSubplot.Layout.Column = [1 2];
-
-chkSubplotSuperpose = uicheckbox(axesLayout, ...
-    'Text',  'Superpose in subplot', ...
-    'Value', false, ...
-    'ValueChangedFcn', @onSubplotSuperposeChanged);
-chkSubplotSuperpose.Layout.Row    = 13;
-chkSubplotSuperpose.Layout.Column = [1 2];
-
-btnClear = uibutton(axesLayout, ...
-    'Text',          'Clear selected subplot', ...
-    'ButtonPushedFcn', @onClearPlot);
-btnClear.Layout.Row    = 14;
-btnClear.Layout.Column = [1 2];
 
 % --- Export button ---
 btnExport = uibutton(bottomLayout, ...
@@ -800,10 +803,6 @@ refreshWorkspaceControls();
             applyAxesConfig(idx);
         end
 
-        rowIdx = ceil(idx / state.subplotCols);
-        colIdx = mod(idx-1, state.subplotCols) + 1;
-        lblActiveSubplot.Text = sprintf('Active subplot: (%d,%d)', rowIdx, colIdx);
-
         chkSubplotSuperpose.Value = state.subplots(idx).superpose;
 
         syncLegendControlsFromSubplot(idx);
@@ -943,21 +942,12 @@ refreshWorkspaceControls();
             return;
         end
 
-        newName = strtrim(edtDerivedName.Value);
-        expr    = strtrim(edtDerivedExpr.Value);
-
-        % Only attempt creation once both fields are filled; ValueChanged only
-        % fires after the user confirms or leaves the field, so we avoid
-        % evaluating partial input while typing.
-        if isempty(newName) || isempty(expr)
-            return;
-        end
-
-        tryCreateDerivedVariable(false);
+        % Defer validation to the Enter key handler to avoid evaluating
+        % partial input while the user is still typing.
     end
 
     function onWindowKeyPressed(~, evt)
-        if ~state.derivedMode || isempty(evt) || ~isfield(evt, 'Key')
+        if ~state.derivedMode || isempty(evt) || ~exist(evt.Key)
             return;
         end
 
