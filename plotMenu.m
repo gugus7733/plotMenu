@@ -35,18 +35,40 @@ state.datatipMode   = false;
 state.derivedMode   = false;
 state.derivedChoices = struct('label',{},'expression',{});
 state.originalYBackground = [];
+state.hoverButtons = gobjects(0);
 maximizeTimer = [];
+
+% Dark theme configuration
+theme.bgMain        = [0.10 0.10 0.12];
+theme.bgPanel       = [0.14 0.14 0.17];
+theme.bgControl     = [0.18 0.18 0.22];
+theme.bgControlAlt  = [0.22 0.22 0.26];
+theme.fgText        = [0.90 0.90 0.92];
+theme.fgMuted       = [0.70 0.70 0.75];
+theme.accent        = [0.20 0.60 0.90];
+theme.accentWarning = [0.90 0.50 0.30];
+theme.axesBg        = [0.12 0.12 0.14];
+theme.axesGrid      = [0.35 0.35 0.40];
+theme.fontName      = 'Segoe UI';
+theme.fontSizeBase  = 10;
+theme.fontSizeSmall = 9;
+theme.fontSizeLarge = 11;
 
 %% Create main UI
 fig = uifigure( ...
-    'Name',     'Plot Menu', ...
+    'Name',     'PlotMenu', ...
     'Position', [100 100 1400 800], ...
-    'Color',    [1 1 1]);
+    'Color',    theme.bgMain);
+if isprop(fig, 'NumberTitle')
+    fig.NumberTitle = 'off';
+end
 scheduleInitialMaximize();
 fig.WindowKeyPressFcn = @onWindowKeyPressed;
+fig.WindowButtonMotionFcn = @onFigureMouseMotion;
 
 mainLayout = uigridlayout(fig, [1 3]);
 mainLayout.ColumnWidth = {'1x', '2x', '1x'};
+mainLayout.BackgroundColor = theme.bgMain;
 
 %% Left panel: data selection
 leftPanel  = uipanel(mainLayout, 'Title', 'Data selection', 'BackgroundColor', [1 1 1], ...
@@ -484,9 +506,46 @@ btnExport.Layout.Column = 1;
 lblStatus = uilabel(fig, ...
     'Text', '', ...
     'HorizontalAlignment', 'center', ...
-    'BackgroundColor', [0 0 0], ...
-    'FontColor', [1 1 1], ...
+    'BackgroundColor', theme.bgControl, ...
+    'FontColor', theme.fgText, ...
     'Visible', 'off');
+
+%% Apply theme styles to UI components
+applyPanelStyle([leftPanel, subplotPanel, actionsPanel, centerPanel, rightPanel, bottomPanel, linePanel, axesPanel]);
+applyPanelStyle(axesScalePanel, theme.bgControlAlt);
+
+applyLayoutBackground([leftLayout, subplotLayout, derivedRow, actionsLayout, centerLayout, rightLayout, bottomLayout, lineLayout, axesLayout], theme.bgPanel);
+applyLayoutBackground(axesScaleLayout, theme.bgControlAlt);
+
+applyLabelStyle([lblLayoutSummary, lblXVar, lblYVar, lblLines, lblLineName, lblLineOrder, lblColor, lblWidth, ...
+    lblStyle, lblTransform, lblGain, lblOffset, lblTitle, lblXLabel, lblYLabel, lblLegendLoc, lblAxesScaleHeader], theme.bgPanel);
+applyLabelStyle([lblXTickSpacing, lblYTickSpacing, lblXScale, lblYScale], theme.bgControlAlt);
+lblLayoutSummary.FontWeight = 'bold';
+lblLayoutSummary.FontSize   = theme.fontSizeLarge;
+lblAxesScaleHeader.FontWeight = 'bold';
+lblAxesScaleHeader.FontSize   = theme.fontSizeLarge;
+
+applyControlStyle([ddLayoutMenu, ddXVar, lbYVar, lbLines, ddLineStyle, ddLegendLocation, ddXScale, ddYScale], theme.bgControl);
+applyControlStyle([edtDerivedName, edtDerivedExpr, edtLineName, edtLineWidth, edtLineGain, edtLineOffset, ...
+    edtXTickSpacing, edtYTickSpacing, edtTitle, edtXLabel, edtYLabel], theme.bgControl);
+applyControlStyle(sldLineWidth, theme.bgControlAlt);
+
+applyCheckboxStyle([chkSubplotSuperpose, chkLineLegend, chkAxisEqual, chkLegend], theme.bgPanel);
+% chkAxisEqual.BackgroundColor = theme.bgControlAlt;
+
+applyButtonStyle([btnRefresh, btnOtherData, btnDerivedNew, btnClear, btnPlot, btnLineOrderDown, btnLineOrderUp, ...
+    btnPresetDeg2Rad, btnPresetRad2Deg, tbtnDatatipMode, btnRemoveLine, btnAutoXTicks, btnAutoYTicks, btnExport]);
+
+btnColor.FontName = theme.fontName;
+btnColor.FontSize = theme.fontSizeBase;
+btnColor.FontWeight = 'bold';
+btnColor.FontColor = theme.fgText;
+
+leftPanel.TitlePosition  = 'centertop';
+centerPanel.TitlePosition = 'centertop';
+rightPanel.TitlePosition  = 'centertop';
+
+state.hoverButtons = [btnPlot, btnExport, btnClear, btnRefresh];
 
 %% Initialize workspace variables in dropdowns/listbox and create default subplot
 applySubplotGrid(1, 1);
@@ -503,11 +562,11 @@ refreshWorkspaceControls();
         lblStatus.Text    = msg;
         lblStatus.Visible = 'on';
         if isError
-            lblStatus.BackgroundColor = [0.8 0 0];
-            lblStatus.FontColor = [1 1 1];
+            lblStatus.BackgroundColor = theme.accentWarning;
+            lblStatus.FontColor = theme.fgText;
         else
-            lblStatus.BackgroundColor = [0 0 0];
-            lblStatus.FontColor = [1 1 1];
+            lblStatus.BackgroundColor = theme.bgControlAlt;
+            lblStatus.FontColor = theme.fgText;
         end
 
         figPos      = fig.Position;
@@ -526,6 +585,149 @@ refreshWorkspaceControls();
             'ExecutionMode', 'singleShot', ...
             'TimerFcn',      @(~, ~) set(lblStatus, 'Visible', 'off'));
         start(statusTimer);
+    end
+
+    function applyPanelStyle(panels, bgColor)
+        if nargin < 2 || isempty(bgColor)
+            bgColor = theme.bgPanel;
+        end
+        for idxLocal = 1:numel(panels)
+            pnl = panels(idxLocal);
+            if isgraphics(pnl)
+                if isprop(pnl, 'BackgroundColor')
+                    pnl.BackgroundColor = bgColor;
+                end
+                if isprop(pnl, 'ForegroundColor')
+                    pnl.ForegroundColor = theme.fgText;
+                end
+                if isprop(pnl, 'FontName')
+                    pnl.FontName = theme.fontName;
+                end
+                if isprop(pnl, 'FontSize')
+                    pnl.FontSize = theme.fontSizeBase;
+                end
+            end
+        end
+    end
+
+    function applyLayoutBackground(layouts, color)
+        if nargin < 2 || isempty(color)
+            color = theme.bgPanel;
+        end
+        for idxLocal = 1:numel(layouts)
+            layoutHandle = layouts(idxLocal);
+            if isgraphics(layoutHandle) && isprop(layoutHandle, 'BackgroundColor')
+                layoutHandle.BackgroundColor = color;
+            end
+        end
+    end
+
+    function applyLabelStyle(labels, bgColor)
+        if nargin < 2 || isempty(bgColor)
+            bgColor = theme.bgPanel;
+        end
+        for idxLocal = 1:numel(labels)
+            lbl = labels(idxLocal);
+            if isgraphics(lbl)
+                if isprop(lbl, 'BackgroundColor')
+                    lbl.BackgroundColor = bgColor;
+                end
+                if isprop(lbl, 'FontColor')
+                    lbl.FontColor = theme.fgText;
+                end
+                if isprop(lbl, 'FontName')
+                    lbl.FontName = theme.fontName;
+                end
+                if isprop(lbl, 'FontSize')
+                    lbl.FontSize = theme.fontSizeSmall;
+                end
+            end
+        end
+    end
+
+    function applyControlStyle(controls, bgColor)
+        if nargin < 2 || isempty(bgColor)
+            bgColor = theme.bgControl;
+        end
+        for idxLocal = 1:numel(controls)
+            ctrl = controls(idxLocal);
+            if isgraphics(ctrl)
+                if isprop(ctrl, 'BackgroundColor')
+                    ctrl.BackgroundColor = bgColor;
+                end
+                if isprop(ctrl, 'FontColor')
+                    ctrl.FontColor = theme.fgText;
+                end
+                if isprop(ctrl, 'FontName')
+                    ctrl.FontName = theme.fontName;
+                end
+                if isprop(ctrl, 'FontSize')
+                    ctrl.FontSize = theme.fontSizeBase;
+                end
+            end
+        end
+    end
+
+    function applyCheckboxStyle(checks, bgColor)
+        if nargin < 2 || isempty(bgColor)
+            bgColor = theme.bgPanel;
+        end
+        for idxLocal = 1:numel(checks)
+            chk = checks(idxLocal);
+            if isgraphics(chk)
+                if isprop(chk, 'BackgroundColor')
+                    chk.BackgroundColor = bgColor;
+                end
+                if isprop(chk, 'FontColor')
+                    chk.FontColor = theme.fgText;
+                end
+                if isprop(chk, 'FontName')
+                    chk.FontName = theme.fontName;
+                end
+                if isprop(chk, 'FontSize')
+                    chk.FontSize = theme.fontSizeBase;
+                end
+            end
+        end
+    end
+
+    function applyButtonStyle(buttons, useAltColor, makeBold)
+        if nargin < 2 || isempty(useAltColor)
+            useAltColor = false;
+        end
+        if nargin < 3 || isempty(makeBold)
+            makeBold = true;
+        end
+
+        for idxLocal = 1:numel(buttons)
+            btn = buttons(idxLocal);
+            if ~isgraphics(btn)
+                continue;
+            end
+            if isprop(btn, 'BackgroundColor')
+                if useAltColor
+                    btn.BackgroundColor = theme.bgControlAlt;
+                else
+                    btn.BackgroundColor = theme.bgControl;
+                end
+            end
+            if isprop(btn, 'FontColor')
+                btn.FontColor = theme.fgText;
+            end
+            if isprop(btn, 'FontName')
+                btn.FontName = theme.fontName;
+            end
+            if isprop(btn, 'FontSize')
+                btn.FontSize = theme.fontSizeBase;
+            end
+            if isprop(btn, 'FontWeight')
+                if makeBold
+                    btn.FontWeight = 'bold';
+                else
+                    btn.FontWeight = 'normal';
+                end
+            end
+        end
     end
 
     function applySubplotGrid(rows, cols)
@@ -583,13 +785,14 @@ refreshWorkspaceControls();
                     title(axLocal, subplotInfo.titleText);
                     xlabel(axLocal, subplotInfo.xLabelText);
                     ylabel(axLocal, subplotInfo.yLabelText);
-                    axLocal.Color = [1 1 1];
+                    applyAxesTheme(axLocal, idx == state.activeSubplot);
                     subplotInfo.axes = axLocal;
                     redrawSubplotContent(idx, subplotInfo);
                 else
                     subplotInfo.axes.Layout.Row    = rIdx;
                     subplotInfo.axes.Layout.Column = cIdx;
                     subplotInfo.axes.Visible       = 'on';
+                    applyAxesTheme(subplotInfo.axes, idx == state.activeSubplot);
                 end
 
                 wireAxesInteractivity(subplotInfo.axes);
@@ -821,6 +1024,8 @@ refreshWorkspaceControls();
             edtXLabel.Value = state.subplots(idx).xLabelText;
             edtYLabel.Value = state.subplots(idx).yLabelText;
         end
+
+        updateAxesSelectionStyles(idx);
     end
 
     function lines = getCurrentLines()
@@ -958,6 +1163,34 @@ refreshWorkspaceControls();
                 exitDerivedMode(true);
             case {'return', 'enter'}
                 tryCreateDerivedVariable(true);
+        end
+    end
+
+    function onFigureMouseMotion(~, ~)
+        if isempty(state.hoverButtons) || ~isgraphics(fig)
+            return;
+        end
+
+        cp = fig.CurrentPoint;
+        for idxLocal = 1:numel(state.hoverButtons)
+            btnLocal = state.hoverButtons(idxLocal);
+            if ~isgraphics(btnLocal) || ~isvalid(btnLocal)
+                continue;
+            end
+
+            try
+                pos = getpixelposition(btnLocal, true);
+            catch
+                continue;
+            end
+
+            isHovering = cp(1) >= pos(1) && cp(1) <= pos(1) + pos(3) && ...
+                cp(2) >= pos(2) && cp(2) <= pos(2) + pos(4);
+            if isHovering
+                btnLocal.BackgroundColor = theme.bgControlAlt;
+            else
+                btnLocal.BackgroundColor = theme.bgControl;
+            end
         end
     end
 
@@ -2076,8 +2309,12 @@ refreshWorkspaceControls();
         xLenLocal = getSelectedXLength();
 
         otherFig = uifigure('Name', 'Other workspace data', ...
-            'Position', [200 200 820 520], 'Color', [1 1 1]);
+            'Position', [200 200 820 520], 'Color', theme.bgMain, ...
+            'FontName', theme.fontName, 'FontSize', theme.fontSizeBase);
         otherFig.WindowStyle = 'modal';
+        if isprop(otherFig, 'NumberTitle')
+            otherFig.NumberTitle = 'off';
+        end
 
         popupGrid = uigridlayout(otherFig, [3 2]);
         popupGrid.RowHeight = {'fit', '1x', 'fit'};
@@ -2145,6 +2382,14 @@ refreshWorkspaceControls();
             'ButtonPushedFcn', @(~, ~) close(otherFig));
         btnClose.Layout.Row    = 3;
         btnClose.Layout.Column = [1 2];
+
+        applyLayoutBackground(popupGrid, theme.bgMain);
+        applyLayoutBackground(detailGrid, theme.bgPanel);
+        applyPanelStyle(detailPanel);
+        applyLabelStyle([lblIntro, lblDetails, lblIndexMode, lblIndexValue, lblPopupStatus], theme.bgPanel);
+        lblPopupStatus.FontColor = theme.accent;
+        applyControlStyle([lstContainers, selectionTree, ddIndexMode, edtIndexValue], theme.bgControl);
+        applyButtonStyle([btnAddFromOther, btnClose]);
 
         currentMeta = [];
         currentNode = [];
@@ -3330,6 +3575,7 @@ refreshWorkspaceControls();
         end
 
         enforceTickSpacing(subplotIdx);
+        applyAxesTheme(ax, subplotIdx == state.activeSubplot);
         state.subplots(subplotIdx) = subplotInfo;
     end
 
@@ -3390,6 +3636,52 @@ refreshWorkspaceControls();
                 catch
                 end
             end
+        end
+    end
+
+    function updateAxesSelectionStyles(selectedIdx)
+        if nargin < 1 || isempty(selectedIdx)
+            selectedIdx = state.activeSubplot;
+        end
+
+        for idx = 1:numel(state.subplots)
+            subplotInfo = ensureSubplotStruct(state.subplots(idx));
+            if isValidAxesHandle(subplotInfo.axes)
+                applyAxesTheme(subplotInfo.axes, idx == selectedIdx);
+            end
+        end
+    end
+
+    function applyAxesTheme(ax, isSelected)
+        if nargin < 2
+            isSelected = false;
+        end
+        if ~isValidAxesHandle(ax)
+            return;
+        end
+
+        xColor = theme.fgMuted;
+        yColor = theme.fgMuted;
+        lineWidth = 1.0;
+        if isSelected
+            xColor = theme.accent;
+            yColor = theme.accent;
+            lineWidth = 1.5;
+        end
+
+        try
+            set(ax, ...
+                'Color', theme.axesBg, ...
+                'XColor', xColor, ...
+                'YColor', yColor, ...
+                'GridColor', theme.axesGrid, ...
+                'MinorGridColor', theme.axesGrid, ...
+                'FontName', theme.fontName, ...
+                'FontSize', theme.fontSizeSmall, ...
+                'Box', 'on', ...
+                'LineWidth', lineWidth);
+            grid(ax, 'on');
+        catch
         end
     end
 
