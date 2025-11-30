@@ -13,30 +13,136 @@
 <body>
     <div id="app-root">
         <header class="pm-header">
-            <div class="pm-header-title">PlotMenu</div>
-            <div class="pm-header-subtitle">Web UI shell (foundation)</div>
+            <div class="pm-header-left">
+                <div class="pm-header-title">PlotMenu</div>
+                <div class="pm-header-subtitle">Web UI preview</div>
+            </div>
+            <div class="pm-header-right">
+                <div id="pm-connection-indicator" class="pm-connection-pill">
+                    <span class="pm-connection-dot"></span>
+                    <span id="pm-status-text">Awaiting MATLAB init...</span>
+                </div>
+                <button id="pm-refresh-button" class="pm-button pm-button--ghost" title="Refresh workspace">
+                    Refresh
+                </button>
+                <button id="pm-ping-button" class="pm-button pm-button--quiet" title="Ping MATLAB backend">
+                    Ping
+                </button>
+            </div>
         </header>
 
-        <main class="pm-main">
-            <section class="pm-card">
-                <h1>Web shell loaded</h1>
-                <p>
-                    This is the minimal web front-end connected to MATLAB via
-                    <code>uihtml</code>. Codex can now extend this layout,
-                    add components, and use the bridge exposed in <code>main.js</code>.
-                </p>
-
-                <div class="pm-status">
-                    <span class="pm-status-label">Connection status:</span>
-                    <span id="pm-status-text" class="pm-status-value">
-                        Awaiting MATLAB init...
-                    </span>
+        <main class="pm-shell">
+            <aside class="pm-panel pm-panel--left">
+                <div class="pm-card">
+                    <div class="pm-card-header">
+                        <div>
+                            <div class="pm-card-title">X variable</div>
+                            <div class="pm-card-subtitle">Pick a base vector for sampling</div>
+                        </div>
+                        <div class="pm-pill" id="pm-x-count">0 candidates</div>
+                    </div>
+                    <div class="pm-field">
+                        <label for="pm-x-select">Workspace arrays</label>
+                        <select id="pm-x-select" class="pm-select">
+                            <option value="" disabled selected>Waiting for MATLAB...</option>
+                        </select>
+                        <div class="pm-hint" id="pm-x-meta">No selection yet</div>
+                    </div>
                 </div>
 
-                <button id="pm-ping-button" class="pm-button">
-                    Ping MATLAB
-                </button>
+                <div class="pm-card">
+                    <div class="pm-card-header">
+                        <div>
+                            <div class="pm-card-title">Y candidates</div>
+                            <div class="pm-card-subtitle">Compatible with the selected X</div>
+                        </div>
+                        <div class="pm-pill" id="pm-y-count">0 items</div>
+                    </div>
+                    <div class="pm-y-list" id="pm-y-list">
+                        <div class="pm-empty">Select an X variable to load suggestions.</div>
+                    </div>
+                </div>
+            </aside>
+
+            <section class="pm-panel pm-panel--center">
+                <div class="pm-card">
+                    <div class="pm-card-header">
+                        <div>
+                            <div class="pm-card-title">Plot actions</div>
+                            <div class="pm-card-subtitle">Trigger plotting directly in MATLAB</div>
+                        </div>
+                        <div class="pm-pill pm-pill--soft" id="pm-latest-update">Idle</div>
+                    </div>
+                    <div class="pm-action-row">
+                        <button id="pm-plot-button" class="pm-button pm-button--primary">Plot selection</button>
+                        <button id="pm-export-button" class="pm-button pm-button--ghost">Export code</button>
+                    </div>
+                    <div class="pm-status-block">
+                        <div class="pm-status-heading">Status</div>
+                        <div class="pm-status-body" id="pm-status-body">
+                            Waiting for MATLAB connection...
+                        </div>
+                    </div>
+                </div>
+
+                <div class="pm-card pm-card--secondary">
+                    <div class="pm-card-header">
+                        <div>
+                            <div class="pm-card-title">Selection summary</div>
+                            <div class="pm-card-subtitle">Quick overview of the active choices</div>
+                        </div>
+                    </div>
+                    <div class="pm-summary-grid">
+                        <div class="pm-summary-item">
+                            <div class="pm-summary-label">X variable</div>
+                            <div class="pm-summary-value" id="pm-summary-x">None</div>
+                        </div>
+                        <div class="pm-summary-item">
+                            <div class="pm-summary-label">Y series</div>
+                            <div class="pm-summary-value" id="pm-summary-y">0 selected</div>
+                        </div>
+                        <div class="pm-summary-item">
+                            <div class="pm-summary-label">Superpose</div>
+                            <div class="pm-summary-value" id="pm-summary-superpose">Off</div>
+                        </div>
+                        <div class="pm-summary-item">
+                            <div class="pm-summary-label">Legend</div>
+                            <div class="pm-summary-value" id="pm-summary-legend">Auto</div>
+                        </div>
+                    </div>
+                </div>
             </section>
+
+            <aside class="pm-panel pm-panel--right">
+                <div class="pm-card">
+                    <div class="pm-card-header">
+                        <div>
+                            <div class="pm-card-title">Plot options</div>
+                            <div class="pm-card-subtitle">Lightweight controls for this preview</div>
+                        </div>
+                    </div>
+                    <div class="pm-toggle-row">
+                        <label class="pm-toggle">
+                            <input type="checkbox" id="pm-superpose-toggle" checked />
+                            <span class="pm-toggle-indicator"></span>
+                            <span class="pm-toggle-label">Superpose lines</span>
+                        </label>
+                    </div>
+                    <div class="pm-toggle-row">
+                        <label class="pm-toggle">
+                            <input type="checkbox" id="pm-legend-toggle" checked />
+                            <span class="pm-toggle-indicator"></span>
+                            <span class="pm-toggle-label">Show legend</span>
+                        </label>
+                    </div>
+                    <div class="pm-hint">Future iterations will expose line styles, axes, and export tweaks here.</div>
+                </div>
+
+                <div class="pm-card pm-card--secondary">
+                    <div class="pm-card-title">MATLAB bridge</div>
+                    <div class="pm-hint">The UI communicates only via <code>Data</code> and <code>DataChangedFcn</code> for R2022a compatibility.</div>
+                </div>
+            </aside>
         </main>
     </div>
 </body>
