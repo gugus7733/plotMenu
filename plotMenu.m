@@ -41,6 +41,7 @@ fig = uifigure( ...
     'Name',     'Plot Menu', ...
     'Position', [100 100 1400 800], ...
     'Color',    [1 1 1]);
+fig.WindowState = 'maximized';
 fig.WindowKeyPressFcn = @onWindowKeyPressed;
 
 mainLayout = uigridlayout(fig, [1 3]);
@@ -1038,6 +1039,8 @@ refreshWorkspaceControls();
             showWarnings = false;
         end
 
+        pause(0.1)
+
         newName = strtrim(edtDerivedName.Value);
         expr    = strtrim(edtDerivedExpr.Value);
 
@@ -1152,15 +1155,24 @@ refreshWorkspaceControls();
         end
     end
 
-    function val = normalizeDerivedCandidate(val, xLen)
-        if isempty(val) || isempty(xLen) || ~isSupportedArray(val)
+    function val = orientSamplesFirst(val, sampleDim)
+        if isempty(val) || ~isSupportedArray(val)
             return;
         end
 
-        if isvector(val)
-            if numel(val) == xLen
-                val = val(:);
+        if nargin < 2 || isempty(sampleDim)
+            [sampleDim, isCompat] = findSampleDim(size(val), numel(val));
+            if ~isCompat
+                return;
             end
+        end
+
+        order = [sampleDim, setdiff(1:ndims(val), sampleDim)];
+        val   = permute(val, order);
+    end
+
+    function val = normalizeDerivedCandidate(val, xLen)
+        if isempty(val) || isempty(xLen) || ~isSupportedArray(val)
             return;
         end
 
@@ -1169,8 +1181,13 @@ refreshWorkspaceControls();
             return;
         end
 
-        order = [sampleDim, setdiff(1:ndims(val), sampleDim)];
-        val = permute(val, order);
+        val = orientSamplesFirst(val, sampleDim);
+
+        if isvector(val)
+            val = val(:);
+            return;
+        end
+
         val = reshape(val, size(val, 1), []);
     end
 
@@ -1179,20 +1196,18 @@ refreshWorkspaceControls();
             return;
         end
 
-        if isvector(val)
-            if numel(val) == xLen
-                val = val(:);
-            end
-            return;
-        end
-
         [sampleDim, isCompat] = findSampleDim(size(val), xLen);
         if ~isCompat
             return;
         end
 
-        order = [sampleDim, setdiff(1:ndims(val), sampleDim)];
-        val = permute(val, order);
+        val = orientSamplesFirst(val, sampleDim);
+
+        if isvector(val)
+            val = val(:);
+            return;
+        end
+
         val = reshape(val, size(val, 1), []);
     end
 
@@ -2533,6 +2548,11 @@ refreshWorkspaceControls();
             return;
         end
 
+        [sampleDimX, isCompatX] = findSampleDim(size(xVal), numel(xVal));
+        if isCompatX
+            xVal = orientSamplesFirst(xVal, sampleDimX);
+        end
+
         xFlat = xVal(:);
 
         subplotIdx  = state.activeSubplot;
@@ -2585,7 +2605,10 @@ refreshWorkspaceControls();
                 continue;
             end
 
-            [ySeries, seriesLabels, seriesSubs] = reshapeSeriesForPlot(yVal, sampleDim, yLabel);
+            yValOriented = orientSamplesFirst(yVal, sampleDim);
+            ySizeUsed    = size(yValOriented);
+
+            [ySeries, seriesLabels, seriesSubs] = reshapeSeriesForPlot(yValOriented, 1, yLabel);
 
             for sIdx = 1:size(ySeries, 2)
                 hLine = plot(targetAx, xFlat, ySeries(:, sIdx), ...
@@ -2599,8 +2622,8 @@ refreshWorkspaceControls();
                 lineInfo.handle  = hLine;
                 lineInfo.xName   = xName;
                 lineInfo.yName   = yExpr;
-                lineInfo.ySize   = size(yVal);
-                lineInfo.sampleDim = sampleDim;
+                lineInfo.ySize   = ySizeUsed;
+                lineInfo.sampleDim = 1;
                 if sIdx <= numel(seriesSubs)
                     lineInfo.seriesIndices = seriesSubs{sIdx};
                 else
@@ -2608,8 +2631,8 @@ refreshWorkspaceControls();
                 end
                 lineInfo.legend  = true;
                 lineInfo.datatips = struct('dataIndex', {}, 'orientation', {});
-                lineInfo.xData   = xFlat(:).';
-                lineInfo.yData   = ySeries(:, sIdx).';
+                lineInfo.xData   = xFlat;
+                lineInfo.yData   = ySeries(:, sIdx);
                 lineInfo.gain    = 1;
                 lineInfo.offset  = 0;
                 lineInfo.color   = hLine.Color;
