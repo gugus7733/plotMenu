@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>Plot Menu – Web UI</title>
+
+    <!-- Base styling -->
+    <link rel="stylesheet" href="style.css" />
+
+    <!-- Main JS for the app and MATLAB bridge -->
+    <script src="main.js"></script>
+</head>
+<body>
+    <div id="app-root">
+        <header class="pm-header">
+            <div class="pm-header-title">PlotMenu</div>
+            <div class="pm-header-subtitle">Web UI shell (foundation)</div>
+        </header>
+
+        <main class="pm-main">
+            <section class="pm-card">
+                <h1>Web shell loaded</h1>
+                <p>
+                    This is the minimal web front-end connected to MATLAB via
+                    <code>uihtml</code>. Codex can now extend this layout,
+                    add components, and use the bridge exposed in <code>main.js</code>.
+                </p>
+
+                <div class="pm-status">
+                    <span class="pm-status-label">Connection status:</span>
+                    <span id="pm-status-text" class="pm-status-value">
+                        Awaiting MATLAB init...
+                    </span>
+                </div>
+
+                <button id="pm-ping-button" class="pm-button">
+                    Ping MATLAB
+                </button>
+            </section>
+        </main>
+    </div>
+</body>
+</html>
