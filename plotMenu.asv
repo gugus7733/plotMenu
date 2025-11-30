@@ -62,8 +62,7 @@ fontUiLight.fontSizeSmall  = 12;
 fontUiLight.fontSizeBase   = 13;
 fontUiLight.fontSizeLarge  = 14;
 
-% fontUiDark.fontName       = 'Segoe UI';
-fontUiDark.fontName       = 'Agency FB';
+fontUiDark.fontName       = 'Segoe UI';
 fontUiDark.fontSizeSmall  = 12;
 fontUiDark.fontSizeBase   = 13;
 fontUiDark.fontSizeLarge  = 14;
