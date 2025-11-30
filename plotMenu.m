@@ -3704,13 +3704,13 @@ refreshWorkspaceControls();
         if strcmp(subplotInfo.yScale, 'log')
             data = gatherAxisData(subplotInfo, 'y');
             if any(~isfinite(data) | data <= 0)
-                uialert(fig, ['Transformed Y data includes non-positive values; reverting Y axis to linear ', ...
-                    'to keep the plot readable.'], 'Log scale reverted');
-                subplotInfo.yScale = 'linear';
-                state.subplots(subplotIdx) = subplotInfo;
-                ddYScale.Value = 'linear';
-                applyAxesConfig(subplotIdx);
-                syncAxesControlsFromSubplot();
+                % Instead of reverting Y axis to linear, clip the invalid
+                % transformed points so the log scale remains applied.
+                try
+                    clipNonPositiveData(subplotIdx, 'y');
+                catch
+                end
+                setStatus('Transformed Y data includes non-positive values; non-positive points were excluded for log scale.', false);
             end
         end
     end
@@ -3931,14 +3931,29 @@ refreshWorkspaceControls();
         desired = src.Value;
         [ok, msg] = canUseLogScale(subplotIdx, axisName, desired);
         if ~ok
+            % If data is not numeric, keep previous behavior and block
             uialert(fig, msg, 'Cannot apply log scale');
             src.Value = 'linear';
             desired = 'linear';
+        else
+            % ok == true: msg may contain an informational note about non-positive values
+            % Show a short non-blocking status instead of a modal dialog
+            if ~isempty(msg)
+                setStatus(msg, false);
+            end
         end
         
         fieldName = ternary(axisName == 'x', 'xScale', 'yScale');
         state.subplots(subplotIdx).(fieldName) = desired;
         applyAxesConfig(subplotIdx);
+        % When enabling log scale, clip/ignore non-positive points so behavior
+        % matches plotting with log enabled beforehand.
+        if strcmp(desired, 'log')
+            try
+                clipNonPositiveData(subplotIdx, axisName);
+            catch
+            end
+        end
         syncAxesControlsFromSubplot();
     end
 
@@ -4291,10 +4306,81 @@ refreshWorkspaceControls();
                 return;
             end
             if any(~isfinite(data) | data <= 0)
-                ok = false;
-                msg = 'Log scale cannot be applied because data has non-positive values.';
-                return;
+                % Do not block applying log scale. Instead, inform caller that
+                % some values will be excluded (they will be clipped/ignored).
+                if strcmp(axisName, 'x')
+                    axisLabel = 'X';
+                else
+                    axisLabel = 'Y';
+                end
+                msg = sprintf('Some %s values are non-positive and will be excluded when using log scale.', axisLabel);
+                % keep ok == true so the operation proceeds
             end
+        end
+    end
+
+    function clipNonPositiveData(subplotIdx, axisName)
+        % For each line in the subplot, set X/Y data points that are
+        % non-positive (or non-finite) on the requested axis to NaN so
+        % they are ignored when a log scale is applied.
+        if subplotIdx < 1 || subplotIdx > numel(state.subplots)
+            return;
+        end
+        subplotInfo = ensureSubplotStruct(state.subplots(subplotIdx));
+        nExcluded = 0;
+        for ln = 1:numel(subplotInfo.lines)
+            lnInfo = subplotInfo.lines(ln);
+            hLine = lnInfo.handle;
+            if isempty(hLine) || ~isvalid(hLine)
+                continue;
+            end
+
+            hx = safeGetLineData(hLine, 'XData');
+            hy = safeGetLineData(hLine, 'YData');
+            if isempty(hx) || isempty(hy)
+                continue;
+            end
+
+            if strcmp(axisName, 'x')
+                mask = ~isfinite(hx) | (hx <= 0);
+            else
+                % Prefer stored base Y data and apply gain/offset so we
+                % compute display values from original data (not any
+                % previously-clipped handle data).
+                if isfield(lnInfo, 'yData') && ~isempty(lnInfo.yData)
+                    baseY = lnInfo.yData;
+                else
+                    baseY = safeGetLineData(hLine, 'YData');
+                end
+                yDisplay = lnInfo.gain .* baseY + lnInfo.offset;
+                if isempty(yDisplay)
+                    yDisplay = hy;
+                end
+                mask = ~isfinite(yDisplay) | (yDisplay <= 0);
+            end
+
+            % Ensure mask length aligns with actual plotted data
+            len = min(numel(hx), numel(hy));
+            if numel(mask) ~= len
+                mask = mask(1:len);
+            end
+
+            if any(mask)
+                hx2 = hx;
+                hy2 = hy;
+                idx = find(mask);
+                hx2(idx) = NaN;
+                hy2(idx) = NaN;
+                try
+                    set(hLine, 'XData', hx2, 'YData', hy2);
+                catch
+                end
+                nExcluded = nExcluded + numel(idx);
+            end
+        end
+
+        if nExcluded > 0
+            setStatus(sprintf('Excluded %d non-positive points for %s log scale.', nExcluded, upper(axisName)), false);
         end
     end
 
