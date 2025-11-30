@@ -6,8 +6,8 @@ function handleDataChanged(src, event)
     if isempty(backendState)
         backendState = struct( ...
             'workspaceMeta', [], ...
-            'figure', [], ...
-            'axes', [], ...
+            'subplots', struct('axes', {}, 'lines', {}, 'options', {}), ...
+            'activeAxesIndex', 1, ...
             'version', '0.2.0-preview');
     end
 
@@ -51,7 +51,7 @@ function handleDataChanged(src, event)
                 'payload', struct('items', yList, 'xName', getField(payload, 'xName', '')));
 
         case 'plotRequest'
-            [result, backendState] = performPlotRequest(payload, backendState);
+            [result, backendState] = performPlotRequest(payload, backendState, src);
             src.Data = struct('type', 'plotUpdate', 'payload', result);
 
         case 'exportRequest'
@@ -192,7 +192,7 @@ function yList = buildYCandidates(payload, workspaceMeta)
     end
 end
 
-function [result, backendState] = performPlotRequest(payload, backendState)
+function [result, backendState] = performPlotRequest(payload, backendState, src)
     result = struct('status', 'error', 'message', 'Invalid request', 'lineCount', 0);
 
     if ~isstruct(payload) || ~isfield(payload, 'xName') || ~isfield(payload, 'yExpressions')
@@ -255,15 +255,22 @@ function [result, backendState] = performPlotRequest(payload, backendState)
         return;
     end
 
-    [ax, backendState] = getOrCreateAxes(backendState);
+    [ax, backendState] = getOrCreateAxes(backendState, src);
+    subplotIdx = backendState.activeAxesIndex;
+
     if ~superpose
+        backendState = clearSubplotLines(backendState, subplotIdx);
         cla(ax);
     end
     hold(ax, 'on');
 
+    newLines = gobjects(1, numel(series));
     for sIdx = 1:numel(series)
-        plot(ax, xData, series(sIdx).yData, 'DisplayName', series(sIdx).label);
+        newLines(sIdx) = plot(ax, xData, series(sIdx).yData, 'DisplayName', series(sIdx).label);
+        attachLineCallbacks(newLines(sIdx), ax, src);
     end
+
+    backendState = registerSubplotLines(backendState, subplotIdx, newLines, superpose);
 
     if showLegend && numel(series) > 1
         legend(ax, 'show');
@@ -476,15 +483,183 @@ function [seriesData, labels] = reshapeSeriesForPlot(yVal, sampleDim, baseLabel)
     end
 end
 
-function [ax, backendState] = getOrCreateAxes(backendState)
-    ax = [];
-    if ~isfield(backendState, 'figure') || isempty(backendState.figure) || ~ishghandle(backendState.figure)
-        backendState.figure = figure('Name', 'PlotMenu Web Plots', 'NumberTitle', 'off');
+function [ax, backendState] = getOrCreateAxes(backendState, src)
+    uiState = fetchUIState(src);
+
+    if ~isempty(uiState) && isfield(uiState, 'axesHandles') && ~isempty(uiState.axesHandles)
+        backendState = syncSubplotRecords(backendState, uiState);
+
+        activeIdx = uiState.activeIndex;
+        if isempty(activeIdx) || activeIdx < 1 || activeIdx > numel(uiState.axesHandles)
+            activeIdx = 1;
+        end
+
+        ax = uiState.axesHandles(activeIdx);
+        backendState.activeAxesIndex = activeIdx;
+        markAxesActive(src, ax);
+        return;
     end
 
-    if ~isfield(backendState, 'axes') || isempty(backendState.axes) || ~ishghandle(backendState.axes)
-        backendState.axes = axes('Parent', backendState.figure);
+    parentFig = ancestor(src, 'figure');
+    if isempty(parentFig) || ~isgraphics(parentFig)
+        parentFig = uifigure('Name', 'PlotMenu Web Plots', 'Color', [0.11 0.12 0.13]);
     end
 
-    ax = backendState.axes;
+    if ~isfield(backendState, 'fallbackAxes') || ~isgraphics(backendState.fallbackAxes)
+        backendState.fallbackAxes = uiaxes(parentFig);
+    end
+
+    ax = backendState.fallbackAxes;
+    backendState.activeAxesIndex = 1;
+end
+
+function backendState = syncSubplotRecords(backendState, uiState)
+    axesHandles = uiState.axesHandles(:)';
+    axesHandles = axesHandles(isgraphics(axesHandles));
+
+    if ~isfield(backendState, 'subplots') || isempty(backendState.subplots)
+        backendState.subplots = struct('axes', {}, 'lines', {}, 'options', {});
+    end
+
+    for idx = 1:numel(axesHandles)
+        if idx > numel(backendState.subplots)
+            backendState.subplots(idx) = struct('axes', axesHandles(idx), 'lines', gobjects(0), 'options', struct()); %#ok<AGROW>
+        else
+            backendState.subplots(idx).axes = axesHandles(idx);
+            if ~isfield(backendState.subplots(idx), 'lines') || isempty(backendState.subplots(idx).lines)
+                backendState.subplots(idx).lines = gobjects(0);
+            else
+                backendState.subplots(idx).lines = backendState.subplots(idx).lines(isgraphics(backendState.subplots(idx).lines));
+            end
+        end
+    end
+    backendState.subplots = backendState.subplots(1:numel(axesHandles));
+end
+
+function backendState = clearSubplotLines(backendState, subplotIdx)
+    if subplotIdx < 1 || subplotIdx > numel(backendState.subplots)
+        return;
+    end
+
+    existing = backendState.subplots(subplotIdx).lines;
+    if ~isempty(existing)
+        delete(existing(isgraphics(existing)));
+    end
+    backendState.subplots(subplotIdx).lines = gobjects(0);
+end
+
+function backendState = registerSubplotLines(backendState, subplotIdx, newLines, superpose)
+    if subplotIdx < 1
+        return;
+    end
+
+    if ~isfield(backendState, 'subplots') || isempty(backendState.subplots)
+        backendState.subplots = struct('axes', {}, 'lines', {}, 'options', {});
+    end
+
+    if subplotIdx > numel(backendState.subplots)
+        backendState.subplots(subplotIdx).axes = []; %#ok<AGROW>
+        backendState.subplots(subplotIdx).lines = gobjects(0);
+        backendState.subplots(subplotIdx).options = struct();
+    end
+
+    if nargin < 4
+        superpose = true;
+    end
+
+    if superpose
+        combined = [backendState.subplots(subplotIdx).lines, newLines]; %#ok<AGROW>
+        backendState.subplots(subplotIdx).lines = combined(isgraphics(combined));
+    else
+        backendState.subplots(subplotIdx).lines = newLines(isgraphics(newLines));
+    end
+end
+
+function attachLineCallbacks(lineHandle, ax, src)
+    if ~isgraphics(lineHandle)
+        return;
+    end
+    lineHandle.ButtonDownFcn = @(obj, evt) markAxesActive(src, ax); %#ok<NASGU>
+end
+
+function uiState = fetchUIState(src)
+    uiState = [];
+    if nargin < 1 || isempty(src)
+        return;
+    end
+
+    try
+        uiState = getappdata(src, 'PlotMenuUIState');
+    catch
+        uiState = [];
+    end
+
+    if isempty(uiState) && isprop(src, 'Parent')
+        try
+            uiState = getappdata(src.Parent, 'PlotMenuUIState');
+        catch
+            uiState = [];
+        end
+    end
+
+    if isempty(uiState)
+        try
+            parentFig = ancestor(src, 'figure');
+            if ~isempty(parentFig) && isgraphics(parentFig)
+                uiState = getappdata(parentFig, 'PlotMenuUIState');
+            end
+        catch
+            uiState = [];
+        end
+    end
+end
+
+function markAxesActive(src, axHandle)
+    if nargin < 2 || isempty(axHandle) || ~isgraphics(axHandle)
+        return;
+    end
+
+    uiState = fetchUIState(src);
+    if isempty(uiState) || ~isfield(uiState, 'axesHandles') || isempty(uiState.axesHandles)
+        return;
+    end
+
+    matchIdx = find(uiState.axesHandles == axHandle, 1);
+    if isempty(matchIdx)
+        return;
+    end
+
+    uiState.activeIndex = matchIdx;
+    uiState.activeAxes  = axHandle;
+
+    try
+        for k = 1:numel(uiState.axesHandles)
+            if isgraphics(uiState.axesHandles(k))
+                uiState.axesHandles(k).Title.String     = sprintf('Subplot %d', k);
+                uiState.axesHandles(k).Title.FontWeight = 'normal';
+            end
+        end
+        axHandle.Title.String     = sprintf('Subplot %d (active)', matchIdx);
+        axHandle.Title.FontWeight = 'bold';
+
+        if isfield(uiState, 'subplotDropdown') && isgraphics(uiState.subplotDropdown)
+            uiState.subplotDropdown.Value = sprintf('Subplot %d', matchIdx);
+        end
+    catch
+    end
+
+    try
+        setappdata(src, 'PlotMenuUIState', uiState);
+    catch
+    end
+
+    fig = [];
+    try
+        fig = ancestor(src, 'figure');
+    catch
+        fig = [];
+    end
+    if ~isempty(fig) && isgraphics(fig)
+        setappdata(fig, 'PlotMenuUIState', uiState);
+    end
 end

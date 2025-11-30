@@ -96,3 +96,4 @@ freqStruct   = struct('labels', freqLabels, 'values', freqListHz);
 
 %% Launch the GUI with all variables available for selection
 plotMenu();
+% start_app();

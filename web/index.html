@@ -31,8 +31,8 @@
             </div>
         </header>
 
-        <main class="pm-shell">
-            <aside class="pm-panel pm-panel--left">
+        <main class="pm-shell pm-shell--stacked">
+            <section class="pm-panel pm-panel--left">
                 <div class="pm-card">
                     <div class="pm-card-header">
                         <div>
@@ -62,14 +62,12 @@
                         <div class="pm-empty">Select an X variable to load suggestions.</div>
                     </div>
                 </div>
-            </aside>
 
-            <section class="pm-panel pm-panel--center">
                 <div class="pm-card">
                     <div class="pm-card-header">
                         <div>
                             <div class="pm-card-title">Plot actions</div>
-                            <div class="pm-card-subtitle">Trigger plotting directly in MATLAB</div>
+                            <div class="pm-card-subtitle">Plot inside the embedded UIAxes</div>
                         </div>
                         <div class="pm-pill pm-pill--soft" id="pm-latest-update">Idle</div>
                     </div>
@@ -111,9 +109,7 @@
                         </div>
                     </div>
                 </div>
-            </section>
 
-            <aside class="pm-panel pm-panel--right">
                 <div class="pm-card">
                     <div class="pm-card-header">
                         <div>
@@ -142,7 +138,7 @@
                     <div class="pm-card-title">MATLAB bridge</div>
                     <div class="pm-hint">The UI communicates only via <code>Data</code> and <code>DataChangedFcn</code> for R2022a compatibility.</div>
                 </div>
-            </aside>
+            </section>
         </main>
     </div>
 </body>

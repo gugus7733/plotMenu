@@ -95,6 +95,10 @@ body {
     align-items: start;
 }
 
+.pm-shell--stacked {
+    grid-template-columns: 1fr;
+}
+
 .pm-panel {
     display: flex;
     flex-direction: column;
