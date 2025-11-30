@@ -1810,6 +1810,13 @@ refreshWorkspaceControls();
         
         try
             assignin('base', newName, val);
+            % Store the user-entered expression so the app can export it later
+            % (label = variable name, expression = user-entered expression)
+            try
+                addCustomYItem(newName, expr, size(val));
+            catch
+                % Non-fatal: continue even if we couldn't store custom item
+            end
             refreshWorkspaceControls();
             setStatus(sprintf('Created derived variable "%s".', newName), false);
             exitDerivedMode(true);
@@ -4737,6 +4744,108 @@ refreshWorkspaceControls();
         codeLines{end+1} = '';
         
         visibleCount = min(numel(state.subplots), state.subplotRows * state.subplotCols);
+
+        % Collect derived variables (label -> expression) known to the app
+        derivedMap = containers.Map();
+        for d = 1:numel(state.customYItems)
+            item = state.customYItems(d);
+            if isfield(item, 'label') && isfield(item, 'expression') && ~isempty(item.label) && ~isempty(item.expression)
+                derivedMap(item.label) = item.expression;
+            end
+        end
+
+        % Prepare dependency collection structures (kept outside control
+        % blocks because MATLAB does not allow nested function definitions
+        % inside conditionals).
+        reqSet = containers.Map('KeyType', 'char', 'ValueType', 'logical');
+        required = {};
+        order = {};
+        visitState = containers.Map('KeyType', 'char', 'ValueType', 'double'); % 1 visiting, 2 done
+
+        % Nested helper: collect required derived names recursively
+        function collectReq(name)
+            if ~ischar(name) || isempty(name)
+                return;
+            end
+            if ~isKey(derivedMap, name) || isKey(reqSet, name)
+                return;
+            end
+            reqSet(name) = true;
+            required{end+1} = name; %#ok<AGROW>
+            % find other derived names referenced in this expression
+            exprLocal = derivedMap(name);
+            keysList = derivedMap.keys;
+            for kk = 1:numel(keysList)
+                kname = keysList{kk};
+                if strcmp(kname, name)
+                    continue;
+                end
+                % whole-word detection
+                if ~isempty(regexp(exprLocal, ['\\<' kname '\\>'], 'once'))
+                    collectReq(kname);
+                end
+            end
+        end
+
+        % Nested helper: DFS for topological ordering
+        function dfs(n)
+            if ~isKey(derivedMap, n) || (isKey(visitState, n) && visitState(n) == 2)
+                return;
+            end
+            if isKey(visitState, n) && visitState(n) == 1
+                % cycle detected -- break it by emitting current node
+                visitState(n) = 2;
+                order{end+1} = n; %#ok<AGROW>
+                return;
+            end
+            visitState(n) = 1;
+            exprLocal = derivedMap(n);
+            keysList = derivedMap.keys;
+            for kk = 1:numel(keysList)
+                kname = keysList{kk};
+                if strcmp(kname, n)
+                    continue;
+                end
+                if isKey(reqSet, kname) && ~isempty(regexp(exprLocal, ['\\<' kname '\\>'], 'once'))
+                    dfs(kname);
+                end
+            end
+            visitState(n) = 2;
+            order{end+1} = n; %#ok<AGROW>
+        end
+
+        % If no derived items, skip dependency collection
+        if ~isempty(derivedMap)
+            % Scan planned plotted lines to find base variable names that are derived
+            for s = 1:visibleCount
+                subplotInfo = state.subplots(s);
+                if isempty(subplotInfo.lines)
+                    continue;
+                end
+                for k = 1:numel(subplotInfo.lines)
+                    info = subplotInfo.lines(k);
+                    nameToken = regexp(strtrim(info.yName), '^([A-Za-z]\w*)', 'tokens', 'once');
+                    if ~isempty(nameToken)
+                        baseName = nameToken{1};
+                        collectReq(baseName);
+                    end
+                end
+            end
+
+            for r = 1:numel(required)
+                dfs(required{r});
+            end
+
+            % Emit assignments in dependency order so each derived variable is
+            % recreated before any plotting that uses it.
+            for q = 1:numel(order)
+                nm = order{q};
+                codeLines{end+1} = sprintf('%s = %s;', nm, derivedMap(nm)); %#ok<AGROW>
+            end
+            if ~isempty(order)
+                codeLines{end+1} = ''; %#ok<AGROW>
+            end
+        end
         for s = 1:visibleCount
             subplotInfo = state.subplots(s);
             if isempty(subplotInfo.lines)
