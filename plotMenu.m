@@ -57,19 +57,18 @@ themeDark.accent        = [0.30 0.70 1.00];
 themeDark.accentWarning = [0.95 0.55 0.35];
 
 % Font profiles
-fontUiLight.fontName      = 'Helvetica';
-fontUiLight.fontSizeSmall  = 12;
-fontUiLight.fontSizeBase   = 13;
-fontUiLight.fontSizeLarge  = 14;
+fontUiLight.fontName      = 'Segoe UI';
+fontUiLight.fontSizeSmall  = 13;
+fontUiLight.fontSizeBase   = 14;
+fontUiLight.fontSizeLarge  = 15;
 
-% fontUiDark.fontName       = 'Segoe UI';
-fontUiDark.fontName       = 'Agency FB';
-fontUiDark.fontSizeSmall  = 12;
-fontUiDark.fontSizeBase   = 13;
-fontUiDark.fontSizeLarge  = 14;
+fontUiDark.fontName       = 'Segoe UI';
+fontUiDark.fontSizeSmall  = 13;
+fontUiDark.fontSizeBase   = 14;
+fontUiDark.fontSizeLarge  = 15;
 
-fontFigure.fontName       = 'Helvetica';
-fontFigure.fontSize       = 12;
+fontFigure.fontName       = 'Segoe UI';
+fontFigure.fontSize       = 18;
 
 theme = themeDark;
 currentFont = fontUiDark;
@@ -516,13 +515,13 @@ ddYScale = uidropdown(axesScaleLayout, ...
 ddYScale.Layout.Row    = 4;
 ddYScale.Layout.Column = 4;
 
-% --- Theme toggle + Export button ---
-chkDarkMode = uicheckbox(bottomLayout, ...
-    'Text', 'Dark mode', ...
-    'Value', 1, ...
-    'ValueChangedFcn', @onDarkModeToggled);
-chkDarkMode.Layout.Row    = 1;
-chkDarkMode.Layout.Column = 2;
+% --- Preferences button + Export button ---
+btnPreferences = uibutton(bottomLayout, ...
+    'Text', '⚙', ...
+    'Tooltip', 'Preferences', ...
+    'ButtonPushedFcn', @onPreferencesClicked);
+btnPreferences.Layout.Row    = 1;
+btnPreferences.Layout.Column = 2;
 
 btnExport = uibutton(bottomLayout, ...
     'Text',          'Export to MATLAB code', ...
@@ -560,9 +559,11 @@ appState.fontUiLight    = fontUiLight;
 appState.fontUiDark     = fontUiDark;
 appState.fontFigure     = fontFigure;
 appState.currentTheme   = theme;
+appState.prefDialog     = [];
+appState.prefControls   = struct();
 appState.allButtons = [btnRefresh, btnOtherData, btnDerivedNew, btnClear, btnPlot, btnLineOrderDown, btnLineOrderUp, ...
-    btnPresetDeg2Rad, btnPresetRad2Deg, tbtnDatatipMode, btnRemoveLine, btnAutoXTicks, btnAutoYTicks, btnExport];
-appState.allCheckboxes = [chkSubplotSuperpose, chkLineLegend, chkAxisEqual, chkLegend, chkDarkMode];
+    btnPresetDeg2Rad, btnPresetRad2Deg, tbtnDatatipMode, btnRemoveLine, btnAutoXTicks, btnAutoYTicks, btnExport, btnPreferences];
+appState.allCheckboxes = [chkSubplotSuperpose, chkLineLegend, chkAxisEqual, chkLegend];
 appState.allLabels = [lblLayoutSummary, lblXVar, lblYVar, lblLines, lblLineName, lblLineOrder, lblColor, lblWidth, ...
     lblStyle, lblTransform, lblGain, lblOffset, lblTitle, lblXLabel, lblYLabel, lblLegendLoc, lblAxesScaleHeader, lblXTickSpacing, ...
     lblYTickSpacing, lblXScale, lblYScale];
@@ -809,10 +810,6 @@ refreshWorkspaceControls();
             lblAxesScaleHeader.FontSize   = fontUi.fontSizeLarge;
         end
         
-        if isgraphics(chkDarkMode)
-            chkDarkMode.Value = isequal(appStateLocal.currentTheme, appStateLocal.themeDark);
-        end
-        
         if isgraphics(lblStatus)
             lblStatus.BackgroundColor = th.bgControl;
             lblStatus.FontColor = th.fgText;
@@ -841,23 +838,194 @@ refreshWorkspaceControls();
         end
     end
 
-    function onDarkModeToggled(src, ~)
-        appStateLocal = guidata(src);
-        if isempty(appStateLocal) || ~isstruct(appStateLocal)
+    function onPreferencesClicked(~, ~)
+        openPreferencesDialog();
+    end
+
+    function openPreferencesDialog()
+        appStateLocal = guidata(fig);
+        
+        % Check if dialog already exists and is valid
+        if ~isempty(appStateLocal.prefDialog) && isvalid(appStateLocal.prefDialog)
+            figure(appStateLocal.prefDialog);
             return;
         end
         
-        if get(src, 'Value') == 1
-            appStateLocal.currentTheme = appStateLocal.themeDark;
-            currentFont = appStateLocal.fontUiDark;
-        else
-            appStateLocal.currentTheme = appStateLocal.themeLight;
-            currentFont = appStateLocal.fontUiLight;
+        % Create new Preferences dialog
+        prefDlg = uifigure('Name', 'Preferences', ...
+            'Position', [300 300 400 280], ...
+            'Color', theme.bgMain, ...
+            'Resize', 'off');
+        prefDlg.WindowStyle = 'modal';
+        if isprop(prefDlg, 'NumberTitle')
+            prefDlg.NumberTitle = 'off';
         end
         
-        theme = appStateLocal.currentTheme;
-        guidata(src, appStateLocal);
-        applyTheme(appStateLocal);
+        % Main layout
+        prefLayout = uigridlayout(prefDlg, [6 2]);
+        prefLayout.RowHeight = {'fit', 'fit', 'fit', 'fit', 'fit', 'fit'};
+        prefLayout.ColumnWidth = {150, '1x'};
+        prefLayout.BackgroundColor = theme.bgPanel;
+        
+        % Dark Mode Checkbox
+        lblDarkMode = uilabel(prefLayout, 'Text', 'Dark Mode:');
+        lblDarkMode.Layout.Row = 1;
+        lblDarkMode.Layout.Column = 1;
+        
+        chkPrefDarkMode = uicheckbox(prefLayout, ...
+            'Text', '', ...
+            'Value', isequal(appStateLocal.currentTheme, appStateLocal.themeDark), ...
+            'ValueChangedFcn', @onPrefDarkModeChanged);
+        chkPrefDarkMode.Layout.Row = 1;
+        chkPrefDarkMode.Layout.Column = 2;
+        
+        % Font Family Dropdown
+        lblFontFamily = uilabel(prefLayout, 'Text', 'UI Font Family:');
+        lblFontFamily.Layout.Row = 2;
+        lblFontFamily.Layout.Column = 1;
+        
+        currentUiFont = getCurrentUiFontProfile();
+        ddPrefFontFamily = uidropdown(prefLayout, ...
+            'Items', {'Segoe UI', 'Helvetica', 'Tahoma', 'Arial', 'Calibri', 'Agency FB'}, ...
+            'Value', currentUiFont.fontName, ...
+            'ValueChangedFcn', @onPrefFontFamilyChanged);
+        ddPrefFontFamily.Layout.Row = 2;
+        ddPrefFontFamily.Layout.Column = 2;
+        
+        % Font Size - Small
+        lblFontSizeSmall = uilabel(prefLayout, 'Text', 'Small Size:');
+        lblFontSizeSmall.Layout.Row = 3;
+        lblFontSizeSmall.Layout.Column = 1;
+        
+        edtPrefFontSizeSmall = uieditfield(prefLayout, 'numeric', ...
+            'Value', currentUiFont.fontSizeSmall, ...
+            'Limits', [6 24], ...
+            'ValueChangedFcn', @(src, ~) onPrefFontSizeChanged(src, 'fontSizeSmall'));
+        edtPrefFontSizeSmall.Layout.Row = 3;
+        edtPrefFontSizeSmall.Layout.Column = 2;
+        
+        % Font Size - Base
+        lblFontSizeBase = uilabel(prefLayout, 'Text', 'Base Size:');
+        lblFontSizeBase.Layout.Row = 4;
+        lblFontSizeBase.Layout.Column = 1;
+        
+        edtPrefFontSizeBase = uieditfield(prefLayout, 'numeric', ...
+            'Value', currentUiFont.fontSizeBase, ...
+            'Limits', [6 24], ...
+            'ValueChangedFcn', @(src, ~) onPrefFontSizeChanged(src, 'fontSizeBase'));
+        edtPrefFontSizeBase.Layout.Row = 4;
+        edtPrefFontSizeBase.Layout.Column = 2;
+        
+        % Font Size - Large
+        lblFontSizeLarge = uilabel(prefLayout, 'Text', 'Large Size:');
+        lblFontSizeLarge.Layout.Row = 5;
+        lblFontSizeLarge.Layout.Column = 1;
+        
+        edtPrefFontSizeLarge = uieditfield(prefLayout, 'numeric', ...
+            'Value', currentUiFont.fontSizeLarge, ...
+            'Limits', [6 24], ...
+            'ValueChangedFcn', @(src, ~) onPrefFontSizeChanged(src, 'fontSizeLarge'));
+        edtPrefFontSizeLarge.Layout.Row = 5;
+        edtPrefFontSizeLarge.Layout.Column = 2;
+        
+        % Close Button
+        btnPrefClose = uibutton(prefLayout, ...
+            'Text', 'Close', ...
+            'ButtonPushedFcn', @(~, ~) close(prefDlg));
+        btnPrefClose.Layout.Row = 6;
+        btnPrefClose.Layout.Column = [1 2];
+        
+        % Apply theme to dialog controls
+        applyLabelStyle([lblDarkMode, lblFontFamily, lblFontSizeSmall, lblFontSizeBase, lblFontSizeLarge], theme.bgPanel);
+        applyCheckboxStyle(chkPrefDarkMode, theme.bgPanel);
+        applyControlStyle([ddPrefFontFamily, edtPrefFontSizeSmall, edtPrefFontSizeBase, edtPrefFontSizeLarge], theme.bgControl);
+        applyButtonStyle(btnPrefClose);
+        
+        % Store dialog handles
+        appStateLocal.prefDialog = prefDlg;
+        appStateLocal.prefControls.chkDarkMode = chkPrefDarkMode;
+        appStateLocal.prefControls.ddFontFamily = ddPrefFontFamily;
+        appStateLocal.prefControls.edtFontSizeSmall = edtPrefFontSizeSmall;
+        appStateLocal.prefControls.edtFontSizeBase = edtPrefFontSizeBase;
+        appStateLocal.prefControls.edtFontSizeLarge = edtPrefFontSizeLarge;
+        guidata(fig, appStateLocal);
+        
+        % Nested callbacks for Preferences dialog
+        function onPrefDarkModeChanged(src, ~)
+            appStateLocal = guidata(fig);
+            if get(src, 'Value') == 1
+                appStateLocal.currentTheme = appStateLocal.themeDark;
+                currentFont = appStateLocal.fontUiDark;
+            else
+                appStateLocal.currentTheme = appStateLocal.themeLight;
+                currentFont = appStateLocal.fontUiLight;
+            end
+            theme = appStateLocal.currentTheme;
+            guidata(fig, appStateLocal);
+            applyTheme(appStateLocal);
+            
+            % Update Preferences dialog controls to reflect new theme
+            if isvalid(prefDlg)
+                currentUiFont = getCurrentUiFontProfile();
+                if isvalid(ddPrefFontFamily)
+                    ddPrefFontFamily.Value = currentUiFont.fontName;
+                end
+                if isvalid(edtPrefFontSizeSmall)
+                    edtPrefFontSizeSmall.Value = currentUiFont.fontSizeSmall;
+                end
+                if isvalid(edtPrefFontSizeBase)
+                    edtPrefFontSizeBase.Value = currentUiFont.fontSizeBase;
+                end
+                if isvalid(edtPrefFontSizeLarge)
+                    edtPrefFontSizeLarge.Value = currentUiFont.fontSizeLarge;
+                end
+                
+                % Reapply theme to dialog
+                prefLayout.BackgroundColor = theme.bgPanel;
+                prefDlg.Color = theme.bgMain;
+                applyLabelStyle([lblDarkMode, lblFontFamily, lblFontSizeSmall, lblFontSizeBase, lblFontSizeLarge], theme.bgPanel);
+                applyCheckboxStyle(chkPrefDarkMode, theme.bgPanel);
+                applyControlStyle([ddPrefFontFamily, edtPrefFontSizeSmall, edtPrefFontSizeBase, edtPrefFontSizeLarge], theme.bgControl);
+                applyButtonStyle(btnPrefClose);
+            end
+        end
+        
+        function onPrefFontFamilyChanged(src, ~)
+            appStateLocal = guidata(fig);
+            currentUiFont = getCurrentUiFontProfile();
+            currentUiFont.fontName = src.Value;
+            updateCurrentUiFontProfile(currentUiFont);
+            applyTheme(appStateLocal);
+        end
+        
+        function onPrefFontSizeChanged(src, fieldName)
+            appStateLocal = guidata(fig);
+            currentUiFont = getCurrentUiFontProfile();
+            currentUiFont.(fieldName) = src.Value;
+            updateCurrentUiFontProfile(currentUiFont);
+            applyTheme(appStateLocal);
+        end
+    end
+
+    function fontProfile = getCurrentUiFontProfile()
+        appStateLocal = guidata(fig);
+        if isequal(appStateLocal.currentTheme, appStateLocal.themeDark)
+            fontProfile = appStateLocal.fontUiDark;
+        else
+            fontProfile = appStateLocal.fontUiLight;
+        end
+    end
+
+    function updateCurrentUiFontProfile(fontProfile)
+        appStateLocal = guidata(fig);
+        if isequal(appStateLocal.currentTheme, appStateLocal.themeDark)
+            appStateLocal.fontUiDark = fontProfile;
+            currentFont = fontProfile;
+        else
+            appStateLocal.fontUiLight = fontProfile;
+            currentFont = fontProfile;
+        end
+        guidata(fig, appStateLocal);
     end
 
     function setStatus(msg, isError)
