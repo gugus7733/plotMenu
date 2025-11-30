@@ -1318,7 +1318,8 @@ refreshWorkspaceControls();
     function lines = ensureLineDefaults(lines)
         if nargin < 1 || isempty(lines)
             lines = struct('handle',{},'xName',{},'yName',{},'legend',{},'datatips',{}, ...
-                'xData',{},'yData',{},'gain',{},'offset',{},'color',{},'lineStyle',{},'lineWidth',{},'displayName',{});
+                'xData',{},'yData',{},'gain',{},'offset',{},'color',{},'lineStyle',{},'lineWidth',{},'displayName',{}, ...
+                'ySize',{},'sampleDim',{},'seriesIndices',{});
             return;
         end
 
@@ -1374,6 +1375,19 @@ refreshWorkspaceControls();
             end
             if ~isfield(lines(ln), 'displayName') || isempty(lines(ln).displayName)
                 lines(ln).displayName = safeGetDisplayName(lines(ln).handle, lines(ln).yName);
+            end
+            if ~isfield(lines(ln), 'ySize') || isempty(lines(ln).ySize)
+                try
+                    lines(ln).ySize = size(lines(ln).yData);
+                catch
+                    lines(ln).ySize = [];
+                end
+            end
+            if ~isfield(lines(ln), 'sampleDim') || isempty(lines(ln).sampleDim)
+                lines(ln).sampleDim = [];
+            end
+            if ~isfield(lines(ln), 'seriesIndices')
+                lines(ln).seriesIndices = [];
             end
         end
     end
@@ -1798,10 +1812,12 @@ refreshWorkspaceControls();
         isCompat  = true;
     end
 
-    function [seriesData, labels] = reshapeSeriesForPlot(yVal, sampleDim, baseLabel)
+    function [seriesData, labels, seriesSubs] = reshapeSeriesForPlot(yVal, sampleDim, baseLabel)
         order = [sampleDim, setdiff(1:ndims(yVal), sampleDim)];
         yReordered = permute(yVal, order);
         seriesData = reshape(yReordered, size(yReordered, 1), []);
+
+        seriesSubs = cell(1, size(seriesData, 2));
 
         otherDims = size(yReordered);
         if isempty(otherDims)
@@ -1810,6 +1826,7 @@ refreshWorkspaceControls();
         otherDims(1) = [];
         if isempty(otherDims)
             labels = {baseLabel};
+            seriesSubs{1} = [];
             return;
         end
 
@@ -1822,6 +1839,7 @@ refreshWorkspaceControls();
         labels = cell(1, totalSeries);
         for sIdx = 1:totalSeries
             subs = linearToSubs(otherDims, sIdx);
+            seriesSubs{sIdx} = subs;
             if numel(subs) > 1
                 suffix = strjoin(arrayfun(@(s) num2str(s), subs, 'UniformOutput', false), ',');
             else
@@ -1839,6 +1857,33 @@ refreshWorkspaceControls();
         cells = cell(1, numel(dims));
         [cells{:}] = ind2sub(dims, idx);
         subs = cellfun(@(c) c, cells);
+    end
+
+    function expr = buildSeriesExpression(lineInfo)
+        lineInfo = ensureLineDefaults(lineInfo);
+        expr = lineInfo.yName;
+        if ~isfield(lineInfo, 'seriesIndices') || isempty(lineInfo.seriesIndices) || ...
+                ~isfield(lineInfo, 'sampleDim') || isempty(lineInfo.sampleDim)
+            return;
+        end
+
+        ySize = [];
+        if isfield(lineInfo, 'ySize')
+            ySize = lineInfo.ySize;
+        end
+
+        nd = max([numel(ySize), lineInfo.sampleDim, numel(lineInfo.seriesIndices) + 1]);
+        idxParts = repmat({':'}, 1, max(1, nd));
+        otherDims = setdiff(1:numel(idxParts), lineInfo.sampleDim);
+        for k = 1:min(numel(otherDims), numel(lineInfo.seriesIndices))
+            idxParts{otherDims(k)} = num2str(lineInfo.seriesIndices(k));
+        end
+
+        while numel(idxParts) > max(2, lineInfo.sampleDim) && strcmp(idxParts{end}, ':')
+            idxParts(end) = [];
+        end
+
+        expr = sprintf('%s(%s)', lineInfo.yName, strjoin(idxParts, ','));
     end
 
     function len = getSelectedXLength()
@@ -2550,7 +2595,7 @@ refreshWorkspaceControls();
                 continue;
             end
 
-            [ySeries, seriesLabels] = reshapeSeriesForPlot(yVal, sampleDim, yLabel);
+            [ySeries, seriesLabels, seriesSubs] = reshapeSeriesForPlot(yVal, sampleDim, yLabel);
 
             for sIdx = 1:size(ySeries, 2)
                 hLine = plot(targetAx, xFlat, ySeries(:, sIdx), ...
@@ -2564,6 +2609,13 @@ refreshWorkspaceControls();
                 lineInfo.handle  = hLine;
                 lineInfo.xName   = xName;
                 lineInfo.yName   = yExpr;
+                lineInfo.ySize   = size(yVal);
+                lineInfo.sampleDim = sampleDim;
+                if sIdx <= numel(seriesSubs)
+                    lineInfo.seriesIndices = seriesSubs{sIdx};
+                else
+                    lineInfo.seriesIndices = [];
+                end
                 lineInfo.legend  = true;
                 lineInfo.datatips = struct('dataIndex', {}, 'orientation', {});
                 lineInfo.xData   = xFlat(:).';
@@ -3662,9 +3714,9 @@ refreshWorkspaceControls();
             if isempty(dataIndex) || ~isfinite(dataIndex)
                 continue;
             end
-            if isprop(dt, 'Orientation')
+            if isprop(dt, 'Location')
                 try
-                    tipOrientation = dt.Orientation;
+                    tipOrientation = dt.Location;
                 catch
                 end
             end
@@ -3688,7 +3740,9 @@ refreshWorkspaceControls();
 
         for t = 1:numel(tips)
             if ~isfield(tips(t), 'orientation') || isempty(tips(t).orientation)
-                tips(t).orientation = '';
+                tips(t).orientation = 'auto';
+            else
+                tips(t).orientation = char(string(tips(t).orientation));
             end
         end
     end
@@ -3841,7 +3895,7 @@ refreshWorkspaceControls();
                 end
                 dnEsc = strrep(dn, '''', '''''');
 
-                yExpr = info.yName;
+                yExpr = buildSeriesExpression(info);
                 if isfield(info, 'gain') && isfield(info, 'offset')
                     if info.gain ~= 1
                         yExpr = sprintf('(%g*(%s))', info.gain, yExpr);
@@ -3933,10 +3987,7 @@ refreshWorkspaceControls();
                         continue;
                     end
 
-                    dtCmd = sprintf('try, dTip = datatip(%s, ''DataIndex'', %d);', lineVarNames{dtIdx}, round(entry.dataIndex));
-                    if ~isempty(orientationStr)
-                        dtCmd = sprintf('%s if isprop(dTip,''Orientation''), dTip.Orientation = ''%s''; end;', dtCmd, orientationStr);
-                    end
+                    dtCmd = sprintf('try, dTip = datatip(%s, ''DataIndex'', %d, ''Location'', ''%s'');', lineVarNames{dtIdx}, round(entry.dataIndex), orientationStr);
                     dtCmd = sprintf('%s catch, end', dtCmd);
                     codeLines{end+1} = dtCmd; %#ok<AGROW>
                 end
