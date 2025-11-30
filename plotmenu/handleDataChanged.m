@@ -1,23 +1,42 @@
 function handleDataChanged(src, event)
-    % src   : HTML component
-    % event : MATLAB event object with .Data field
-    
+    % src   : HTML component (uihtml)
+    % event : event object with .Data field
+
     incomingData = event.Data;
-    
-    % For now, just log to the Command Window.
+
     fprintf('[plotMenu] DataChanged from HTML:\n');
     disp(incomingData);
-    
-    % Example of how you might branch later:
-    % if isstruct(incomingData) && isfield(incomingData, 'type')
-    %     switch incomingData.type
-    %         case 'plotRequest'
-    %             % TODO: implement plotting logic
-    %         case 'uiStateChanged'
-    %             % TODO: save/restore UI state
-    %         otherwise
-    %             fprintf('[plotMenu] Unknown message type: %s\n', ...
-    %                     incomingData.type);
-    %     end
-    % end
+
+    if ~isstruct(incomingData) || ~isfield(incomingData, 'type')
+        fprintf('[plotMenu] Incoming data has no ''type'' field, ignoring.\n');
+        return;
+    end
+
+    msgType = incomingData.type;
+    if isfield(incomingData, 'payload')
+        payload = incomingData.payload;
+    else
+        payload = [];
+    end
+
+    switch msgType
+        case 'pingFromUI'
+            % Simple ping/pong demo
+            src.Data = struct( ...
+                'type',    'pongFromMatlab', ...
+                'payload', struct('time', datestr(now)) );
+
+        case 'uiReady'
+            % UI reports it is ready
+            fprintf('[plotMenu] UI reported ready.\n');
+
+            src.Data = struct( ...
+                'type', 'statusMessage', ...
+                'payload', struct( ...
+                    'level', 'info', ...
+                    'text',  'MATLAB backend connected.' ) );
+
+        otherwise
+            fprintf('[plotMenu] Unknown message type: %s\n', msgType);
+    end
 end
