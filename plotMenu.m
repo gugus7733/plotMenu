@@ -389,8 +389,11 @@ axesPanel = uipanel(rightLayout, 'Title', 'Axes properties', 'BackgroundColor', 
 axesPanel.Layout.Row    = 2;
 axesPanel.Layout.Column = 1;
 
-axesLayout = uigridlayout(axesPanel, [12 2]);
-axesLayout.RowHeight   = {20, 30, 20, 30, 20, 30, 30, 20, 30, 20, 110, '1x'};
+% Reduced rows/spacing so the right panel fits better on 1080p screens.
+% Move the "Axes & scale" header closer to the legend controls and
+% reduce the large spacer that previously pushed the export button off-screen.
+axesLayout = uigridlayout(axesPanel, [8 2]);
+axesLayout.RowHeight   = {20, 30, 20, 30, 20, 24, 155, '1x'};
 axesLayout.ColumnWidth = {100, '1x'};
 
 lblTitle = uilabel(axesLayout, 'Text', 'Title:');
@@ -443,11 +446,13 @@ ddLegendLocation.Layout.Column = 2;
 lblAxesScaleHeader = uilabel(axesLayout, ...
     'Text', 'Axes & scale (active subplot)', ...
     'FontWeight', 'bold');
-lblAxesScaleHeader.Layout.Row    = 10;
+% Place header directly after the legend controls and put the axes/scale
+% controls right below it (reduced vertical gap).
+lblAxesScaleHeader.Layout.Row    = 6;
 lblAxesScaleHeader.Layout.Column = [1 2];
 
 axesScalePanel = uipanel(axesLayout, 'BackgroundColor', theme.bgPanel);
-axesScalePanel.Layout.Row    = 11;
+axesScalePanel.Layout.Row    = 7;
 axesScalePanel.Layout.Column = [1 2];
 
 axesScaleLayout = uigridlayout(axesScalePanel, [4 4]);
