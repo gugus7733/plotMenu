@@ -307,7 +307,7 @@ btnPresetRad2Deg.Layout.Row    = 11;
 btnPresetRad2Deg.Layout.Column = 3;
 
 tbtnDatatipMode = uibutton(lineLayout, 'state', ...
-    'Text', 'Datatip mode (off)', ...
+    'Text', 'ACTIVATE DATATIPS', ...
     'ValueChangedFcn', @onDatatipModeToggled);
 tbtnDatatipMode.Layout.Row    = 12;
 tbtnDatatipMode.Layout.Column = [1 3];
@@ -3591,9 +3591,9 @@ refreshWorkspaceControls();
     function onDatatipModeToggled(src, ~)
         state.datatipMode = logical(src.Value);
         if state.datatipMode
-            src.Text = 'Datatip mode (on)';
+            src.Text = '>>> DATATIPS ON <<<';
         else
-            src.Text = 'Datatip mode (off)';
+            src.Text = 'ACTIVATE DATATIPS';
             syncDatatipsFromAxes(state.activeSubplot);
         end
     end

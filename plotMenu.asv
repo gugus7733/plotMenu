@@ -307,7 +307,7 @@ btnPresetRad2Deg.Layout.Row    = 11;
 btnPresetRad2Deg.Layout.Column = 3;
 
 tbtnDatatipMode = uibutton(lineLayout, 'state', ...
-    'Text', 'Datatip mode (off)', ...
+    'Text', 'ACTIVATE DATATIPS', ...
     'ValueChangedFcn', @onDatatipModeToggled);
 tbtnDatatipMode.Layout.Row    = 12;
 tbtnDatatipMode.Layout.Column = [1 3];
@@ -396,7 +396,7 @@ chkAxisEqual = uicheckbox(axesScaleLayout, ...
 chkAxisEqual.Layout.Row    = 1;
 chkAxisEqual.Layout.Column = [1 4];
 
-lblXTickSpacing = uilabel(axesScaleLayout, 'Text', 'Xtick :');
+lblXTickSpacing = uilabel(axesScaleLayout, 'Text', 'Xtick');
 lblXTickSpacing.Layout.Row    = 2;
 lblXTickSpacing.Layout.Column = 1;
 
@@ -489,6 +489,39 @@ setActiveSubplot(1);
 refreshWorkspaceControls();
 
 %% --- Nested helper and callback functions ---
+
+    function setStatus(msg, isError)
+        if nargin < 2
+            isError = false;
+        end
+
+        lblStatus.Text    = msg;
+        lblStatus.Visible = 'on';
+        if isError
+            lblStatus.BackgroundColor = [0.8 0 0];
+            lblStatus.FontColor = [1 1 1];
+        else
+            lblStatus.BackgroundColor = [0 0 0];
+            lblStatus.FontColor = [1 1 1];
+        end
+
+        figPos      = fig.Position;
+        toastWidth  = min(360, figPos(3) - 20);
+        toastWidth  = max(toastWidth, 200);
+        toastHeight = 24;
+        lblStatus.Position = [ (figPos(3) - toastWidth) / 2, 10, toastWidth, toastHeight ];
+
+        if ~isempty(statusTimer) && isvalid(statusTimer)
+            stop(statusTimer);
+            delete(statusTimer);
+        end
+
+        statusTimer = timer( ...
+            'StartDelay',    3, ...
+            'ExecutionMode', 'singleShot', ...
+            'TimerFcn',      @(~, ~) set(lblStatus, 'Visible', 'off'));
+        start(statusTimer);
+    end
 
     function applySubplotGrid(rows, cols)
         % Create or resize the subplot grid based on a table-like selection
@@ -737,19 +770,14 @@ refreshWorkspaceControls();
             end
             for tipIdx = 1:numel(lnInfo.datatips)
                 dt = lnInfo.datatips(tipIdx);
-                if ~isempty(dt.dataIndex) && isfinite(dt.dataIndex)
-                    try
-                        datatip(hLine, 'DataIndex', dt.dataIndex);
-                        continue;
-                    catch
-                    end
-                end
-                pos = dt.position;
-                if numel(pos) < 2
+                if isempty(dt.dataIndex) || ~isfinite(dt.dataIndex)
                     continue;
                 end
                 try
-                    datatip(hLine, pos(1), pos(2));
+                    dtHandle = datatip(hLine, 'DataIndex', round(dt.dataIndex));
+                    if isfield(dt, 'orientation') && ~isempty(dt.orientation) && isvalid(dtHandle) && isprop(dtHandle, 'Orientation')
+                        dtHandle.Orientation = dt.orientation;
+                    end
                 catch
                 end
             end
@@ -911,9 +939,21 @@ refreshWorkspaceControls();
     end
 
     function onDerivedFieldEdited(~, ~)
-        if state.derivedMode
-            tryCreateDerivedVariable();
+        if ~state.derivedMode
+            return;
         end
+
+        newName = strtrim(edtDerivedName.Value);
+        expr    = strtrim(edtDerivedExpr.Value);
+
+        % Only attempt creation once both fields are filled; ValueChanged only
+        % fires after the user confirms or leaves the field, so we avoid
+        % evaluating partial input while typing.
+        if isempty(newName) || isempty(expr)
+            return;
+        end
+
+        tryCreateDerivedVariable(false);
     end
 
     function onWindowKeyPressed(~, evt)
@@ -925,13 +965,14 @@ refreshWorkspaceControls();
             case {'escape'}
                 exitDerivedMode(true);
             case {'return', 'enter'}
-                tryCreateDerivedVariable();
+                tryCreateDerivedVariable(true);
         end
     end
 
     function onYSelectionChanged(src, evt)
         if state.derivedMode
             insertDerivedExpression(extractDerivedExpression(src, evt));
+            lbYVar.Value = {};
         end
     end
 
@@ -1002,16 +1043,30 @@ refreshWorkspaceControls();
         end
     end
 
-    function tryCreateDerivedVariable()
+    function tryCreateDerivedVariable(showWarnings)
+        if nargin < 1
+            showWarnings = false;
+        end
+
         newName = strtrim(edtDerivedName.Value);
         expr    = strtrim(edtDerivedExpr.Value);
 
-        if isempty(newName) || ~isvarname(newName)
-            setStatus('Please provide a valid MATLAB variable name.', true);
+        % Require both fields before attempting to evaluate; otherwise stay quiet
+        if isempty(newName) || isempty(expr)
+            if showWarnings
+                if isempty(newName) && isempty(expr)
+                    setStatus('Enter a variable name and an expression before creating a derived variable.', true);
+                elseif isempty(newName)
+                    setStatus('Enter a variable name for the derived variable.', true);
+                else
+                    setStatus('Enter an expression for the derived variable.', true);
+                end
+            end
             return;
         end
-        if isempty(expr)
-            setStatus('Enter an expression that uses existing variables.', true);
+
+        if ~isvarname(newName)
+            setStatus('Please provide a valid MATLAB variable name.', true);
             return;
         end
 
@@ -1263,7 +1318,8 @@ refreshWorkspaceControls();
     function lines = ensureLineDefaults(lines)
         if nargin < 1 || isempty(lines)
             lines = struct('handle',{},'xName',{},'yName',{},'legend',{},'datatips',{}, ...
-                'xData',{},'yData',{},'gain',{},'offset',{},'color',{},'lineStyle',{},'lineWidth',{},'displayName',{});
+                'xData',{},'yData',{},'gain',{},'offset',{},'color',{},'lineStyle',{},'lineWidth',{},'displayName',{}, ...
+                'ySize',{},'sampleDim',{},'seriesIndices',{});
             return;
         end
 
@@ -1272,18 +1328,29 @@ refreshWorkspaceControls();
                 lines(ln).legend = true;
             end
             if ~isfield(lines(ln), 'datatips') || isempty(lines(ln).datatips)
-                lines(ln).datatips = struct('dataIndex', {}, 'position', {}, 'orientation', {});
+                lines(ln).datatips = struct('dataIndex', {}, 'orientation', {});
             elseif isnumeric(lines(ln).datatips)
                 numericTips = lines(ln).datatips;
-                tipStruct = struct('dataIndex', {}, 'position', {}, 'orientation', {});
-                for tipIdx = 1:size(numericTips, 1)
-                    tipStruct(end+1) = struct('dataIndex', [], 'position', numericTips(tipIdx, 1:min(2, size(numericTips, 2))), 'orientation', ''); %#ok<AGROW>
+                tipStruct = struct('dataIndex', {}, 'orientation', {});
+                for tipIdx = 1:numel(numericTips)
+                    tipStruct(end+1) = struct('dataIndex', numericTips(tipIdx), 'orientation', ''); %#ok<AGROW>
                 end
                 lines(ln).datatips = tipStruct;
-            elseif ~isempty(lines(ln).datatips) && ~isfield(lines(ln).datatips, 'orientation')
+            else
+                tipStruct = struct('dataIndex', {}, 'orientation', {});
                 for tipIdx = 1:numel(lines(ln).datatips)
-                    lines(ln).datatips(tipIdx).orientation = '';
+                    curTip = lines(ln).datatips(tipIdx);
+                    curIdx = [];
+                    if isfield(curTip, 'dataIndex')
+                        curIdx = curTip.dataIndex;
+                    end
+                    curOrientation = '';
+                    if isfield(curTip, 'orientation') && ~isempty(curTip.orientation)
+                        curOrientation = curTip.orientation;
+                    end
+                    tipStruct(end+1) = struct('dataIndex', curIdx, 'orientation', curOrientation); %#ok<AGROW>
                 end
+                lines(ln).datatips = tipStruct;
             end
             if ~isfield(lines(ln), 'gain') || isempty(lines(ln).gain)
                 lines(ln).gain = 1;
@@ -1308,6 +1375,19 @@ refreshWorkspaceControls();
             end
             if ~isfield(lines(ln), 'displayName') || isempty(lines(ln).displayName)
                 lines(ln).displayName = safeGetDisplayName(lines(ln).handle, lines(ln).yName);
+            end
+            if ~isfield(lines(ln), 'ySize') || isempty(lines(ln).ySize)
+                try
+                    lines(ln).ySize = size(lines(ln).yData);
+                catch
+                    lines(ln).ySize = [];
+                end
+            end
+            if ~isfield(lines(ln), 'sampleDim') || isempty(lines(ln).sampleDim)
+                lines(ln).sampleDim = [];
+            end
+            if ~isfield(lines(ln), 'seriesIndices')
+                lines(ln).seriesIndices = [];
             end
         end
     end
@@ -1732,10 +1812,12 @@ refreshWorkspaceControls();
         isCompat  = true;
     end
 
-    function [seriesData, labels] = reshapeSeriesForPlot(yVal, sampleDim, baseLabel)
+    function [seriesData, labels, seriesSubs] = reshapeSeriesForPlot(yVal, sampleDim, baseLabel)
         order = [sampleDim, setdiff(1:ndims(yVal), sampleDim)];
         yReordered = permute(yVal, order);
         seriesData = reshape(yReordered, size(yReordered, 1), []);
+
+        seriesSubs = cell(1, size(seriesData, 2));
 
         otherDims = size(yReordered);
         if isempty(otherDims)
@@ -1744,6 +1826,7 @@ refreshWorkspaceControls();
         otherDims(1) = [];
         if isempty(otherDims)
             labels = {baseLabel};
+            seriesSubs{1} = [];
             return;
         end
 
@@ -1756,6 +1839,7 @@ refreshWorkspaceControls();
         labels = cell(1, totalSeries);
         for sIdx = 1:totalSeries
             subs = linearToSubs(otherDims, sIdx);
+            seriesSubs{sIdx} = subs;
             if numel(subs) > 1
                 suffix = strjoin(arrayfun(@(s) num2str(s), subs, 'UniformOutput', false), ',');
             else
@@ -1773,6 +1857,33 @@ refreshWorkspaceControls();
         cells = cell(1, numel(dims));
         [cells{:}] = ind2sub(dims, idx);
         subs = cellfun(@(c) c, cells);
+    end
+
+    function expr = buildSeriesExpression(lineInfo)
+        lineInfo = ensureLineDefaults(lineInfo);
+        expr = lineInfo.yName;
+        if ~isfield(lineInfo, 'seriesIndices') || isempty(lineInfo.seriesIndices) || ...
+                ~isfield(lineInfo, 'sampleDim') || isempty(lineInfo.sampleDim)
+            return;
+        end
+
+        ySize = [];
+        if isfield(lineInfo, 'ySize')
+            ySize = lineInfo.ySize;
+        end
+
+        nd = max([numel(ySize), lineInfo.sampleDim, numel(lineInfo.seriesIndices) + 1]);
+        idxParts = repmat({':'}, 1, max(1, nd));
+        otherDims = setdiff(1:numel(idxParts), lineInfo.sampleDim);
+        for k = 1:min(numel(otherDims), numel(lineInfo.seriesIndices))
+            idxParts{otherDims(k)} = num2str(lineInfo.seriesIndices(k));
+        end
+
+        while numel(idxParts) > max(2, lineInfo.sampleDim) && strcmp(idxParts{end}, ':')
+            idxParts(end) = [];
+        end
+
+        expr = sprintf('%s(%s)', lineInfo.yName, strjoin(idxParts, ','));
     end
 
     function len = getSelectedXLength()
@@ -1987,7 +2098,7 @@ refreshWorkspaceControls();
             try
                 val = evalin('base', metaEntry.name);
             catch ME
-                setStatus(sprintf('Cannot evaluate "%s": %s', metaEntry.name, ME.message), true);
+                setPopupStatus(sprintf('Cannot evaluate "%s": %s', metaEntry.name, ME.message), true);
                 return;
             end
 
@@ -2219,7 +2330,7 @@ refreshWorkspaceControls();
             idxStr = strjoin(arrayfun(@(p) sprintf('{%s}', p{1}), parts, 'UniformOutput', false), '');
         end
 
-        function setStatus(msg, isError)
+        function setPopupStatus(msg, isError)
             if nargin < 2
                 isError = false;
             end
@@ -2249,7 +2360,7 @@ refreshWorkspaceControls();
                     if numel(currentMeta.size) > 1 && prod(currentMeta.size) > 1 && ~contains(baseExpr, '(')
                         idxStr = getIndexString('struct');
                         if isempty(idxStr)
-                            setStatus('Provide a valid struct index or pick a child node.', true);
+                            setPopupStatus('Provide a valid struct index or pick a child node.', true);
                             return;
                         end
                         baseExpr  = sprintf('%s(%s)', baseExpr, idxStr);
@@ -2261,7 +2372,7 @@ refreshWorkspaceControls();
                 case 'cell'
                     idxStr = getIndexString('cell');
                     if isempty(idxStr)
-                        setStatus('Provide a cell index or nested path (e.g., 1,2).', true);
+                        setPopupStatus('Provide a cell index or nested path (e.g., 1,2).', true);
                         return;
                     end
                     expr  = sprintf('%s%s', baseExpr, idxStr);
@@ -2296,7 +2407,7 @@ refreshWorkspaceControls();
             try
                 val = evalin('base', expr);
             catch ME
-                setStatus(sprintf('Cannot evaluate "%s": %s', expr, ME.message), true);
+                setPopupStatus(sprintf('Cannot evaluate "%s": %s', expr, ME.message), true);
                 expr  = '';
                 label = '';
                 return;
@@ -2316,13 +2427,13 @@ refreshWorkspaceControls();
                     candidateVal = evalin('base', expr);
                     valMeta = describeValue(expr, candidateVal, label);
                 catch ME
-                    setStatus(sprintf('Cannot evaluate "%s": %s', expr, ME.message), true);
+                    setPopupStatus(sprintf('Cannot evaluate "%s": %s', expr, ME.message), true);
                     return;
                 end
             end
 
             if isempty(candidateVal)
-                setStatus('Selected entry could not be evaluated.', true);
+                setPopupStatus('Selected entry could not be evaluated.', true);
                 return;
             end
 
@@ -2349,15 +2460,15 @@ refreshWorkspaceControls();
                             selectionTree.SelectedNodes = existingChild;
                         end
                     end
-                    setStatus('Selection is a container; drill down to reach a plottable array.', true);
+                    setPopupStatus('Selection is a container; drill down to reach a plottable array.', true);
                 else
-                    setStatus('Selected data is not a plottable array.', true);
+                    setPopupStatus('Selected data is not a plottable array.', true);
                 end
                 return;
             end
 
             if ~isempty(xLenLocal) && ~isLengthCompatible(size(candidateVal), xLenLocal)
-                setStatus(sprintf(['Length mismatch: X has %d elements but no dimension of the selection matches ' ...
+                setPopupStatus(sprintf(['Length mismatch: X has %d elements but no dimension of the selection matches ' ...
                     '(%s).'], xLenLocal, sizeToString(size(candidateVal))), true);
                 return;
             end
@@ -2367,7 +2478,7 @@ refreshWorkspaceControls();
             if ~isempty(lbYVar.ItemsData)
                 lbYVar.Value = {lbYVar.ItemsData{end}};
             end
-            setStatus(sprintf('Added "%s" to Y list.', label), false);
+            setPopupStatus(sprintf('Added "%s" to Y list.', label), false);
         end
 
         function node = findChildByExpression(parentNode, expr)
@@ -2484,7 +2595,7 @@ refreshWorkspaceControls();
                 continue;
             end
 
-            [ySeries, seriesLabels] = reshapeSeriesForPlot(yVal, sampleDim, yLabel);
+            [ySeries, seriesLabels, seriesSubs] = reshapeSeriesForPlot(yVal, sampleDim, yLabel);
 
             for sIdx = 1:size(ySeries, 2)
                 hLine = plot(targetAx, xFlat, ySeries(:, sIdx), ...
@@ -2498,8 +2609,15 @@ refreshWorkspaceControls();
                 lineInfo.handle  = hLine;
                 lineInfo.xName   = xName;
                 lineInfo.yName   = yExpr;
+                lineInfo.ySize   = size(yVal);
+                lineInfo.sampleDim = sampleDim;
+                if sIdx <= numel(seriesSubs)
+                    lineInfo.seriesIndices = seriesSubs{sIdx};
+                else
+                    lineInfo.seriesIndices = [];
+                end
                 lineInfo.legend  = true;
-                lineInfo.datatips = struct('dataIndex', {}, 'position', {}, 'orientation', {});
+                lineInfo.datatips = struct('dataIndex', {}, 'orientation', {});
                 lineInfo.xData   = xFlat(:).';
                 lineInfo.yData   = ySeries(:, sIdx).';
                 lineInfo.gain    = 1;
@@ -3367,50 +3485,38 @@ refreshWorkspaceControls();
             return;
         end
 
-        [dataIndex, tipPos] = resolveDatatipIndex(hLine, evt);
+        dataIndex = resolveDatatipIndex(hLine, evt);
 
         dtHandle = [];
         tipOrientation = '';
         try
             if ~isempty(dataIndex)
-                dtHandle = datatip(hLine, 'DataIndex', dataIndex);
-            elseif ~isempty(tipPos) && numel(tipPos) >= 2
-                dtHandle = datatip(hLine, tipPos(1), tipPos(2));
+                dtHandle = datatip(hLine, 'DataIndex', round(dataIndex));
             else
                 dtHandle = datatip(hLine);
             end
         catch
         end
 
-        try
-            if isempty(tipPos) && ~isempty(dataIndex) && isvalid(hLine)
-                xData = get(hLine, 'XData');
-                yData = get(hLine, 'YData');
-                if dataIndex >= 1 && dataIndex <= numel(xData) && dataIndex <= numel(yData)
-                    tipPos = [xData(dataIndex), yData(dataIndex)];
-                end
+        if isempty(dataIndex) && ~isempty(dtHandle) && isvalid(dtHandle)
+            try
+                dataIndex = dtHandle.DataIndex;
+            catch
             end
-
-            if ~isempty(dtHandle) && isvalid(dtHandle)
-                try
-                    tipOrientation = dtHandle.Orientation;
-                catch
-                end
-            end
-
-            recordDatatipPosition(hLine, tipPos, dataIndex, tipOrientation);
-        catch
         end
+
+        if ~isempty(dtHandle) && isvalid(dtHandle)
+            try
+                tipOrientation = dtHandle.Orientation;
+            catch
+            end
+        end
+
+        recordDatatipIndex(hLine, dataIndex, tipOrientation);
     end
 
-    function [idx, pos] = resolveDatatipIndex(hLine, evt)
+    function idx = resolveDatatipIndex(hLine, evt)
         idx = [];
-        pos = [];
-
-        try
-            pos = evt.IntersectionPoint;
-        catch
-        end
 
         xData = safeGetLineData(hLine, 'XData');
         yData = safeGetLineData(hLine, 'YData');
@@ -3418,30 +3524,33 @@ refreshWorkspaceControls();
             return;
         end
 
-        if isempty(idx) && ~isempty(evt)
+        if ~isempty(evt)
             try
                 idx = evt.DataIndex;
             catch
             end
-        end
-
-        if isempty(idx) && ~isempty(pos)
-            idx = findClosestIndex(xData, yData, pos(1), pos(2));
+            if isempty(idx)
+                try
+                    pos = evt.IntersectionPoint;
+                catch
+                    pos = [];
+                end
+                if numel(pos) >= 2
+                    idx = findClosestIndex(xData, yData, pos(1), pos(2));
+                end
+            end
         end
 
         if isempty(idx)
             idx = 1;
         end
-        if isempty(pos) && idx >= 1 && idx <= numel(xData) && idx <= numel(yData)
-            pos = [xData(idx), yData(idx)];
-        end
     end
 
-    function recordDatatipPosition(hLine, pos, dataIndex, orientation)
-        if nargin < 4
+    function recordDatatipIndex(hLine, dataIndex, orientation)
+        if nargin < 3
             orientation = '';
         end
-        if isempty(hLine) || ~isvalid(hLine) || numel(pos) < 2
+        if isempty(hLine) || ~isvalid(hLine) || isempty(dataIndex) || ~isfinite(dataIndex)
             return;
         end
 
@@ -3457,11 +3566,11 @@ refreshWorkspaceControls();
         end
 
         if ~isfield(lines(lineIdx), 'datatips') || isempty(lines(lineIdx).datatips)
-            lines(lineIdx).datatips = struct('dataIndex', {}, 'position', {}, 'orientation', {});
+            lines(lineIdx).datatips = struct('dataIndex', {}, 'orientation', {});
         end
 
         tips = lines(lineIdx).datatips;
-        tips(end+1) = struct('dataIndex', dataIndex, 'position', pos(1:2), 'orientation', orientation); %#ok<AGROW>
+        tips(end+1) = struct('dataIndex', round(dataIndex), 'orientation', orientation); %#ok<AGROW>
         lines(lineIdx).datatips = tips;
         state.subplots(subplotIdx).lines = lines;
     end
@@ -3482,9 +3591,9 @@ refreshWorkspaceControls();
     function onDatatipModeToggled(src, ~)
         state.datatipMode = logical(src.Value);
         if state.datatipMode
-            src.Text = 'Datatip mode (on)';
+            src.Text = '>>> DATA';
         else
-            src.Text = 'Datatip mode (off)';
+            src.Text = 'ACTIVATE DATATIPS';
             syncDatatipsFromAxes(state.activeSubplot);
         end
     end
@@ -3503,13 +3612,16 @@ refreshWorkspaceControls();
 
         dtByType  = findall(searchRoot, 'Type', 'datatip');
         dtByClass = findall(searchRoot, '-class', 'matlab.graphics.datatip.DataTip');
-        dtObjects = unique([dtByType(:); dtByClass(:)], 'stable');
+        dtByIndex = findall(searchRoot, '-property', 'DataIndex');
+        dtObjects = unique([dtByType(:); dtByClass(:); dtByIndex(:)], 'stable');
+        dtObjects = dtObjects(isgraphics(dtObjects));
 
         if isempty(dtObjects)
+            dtObjects = gobjects(0, 1);
             return;
         end
 
-        dtObjects = dtObjects(arrayfun(@(dt) isequal(ancestor(getTarget(dt), 'axes'), axHandle), dtObjects));
+        dtObjects = dtObjects(arrayfun(@(dt) isDatatipOnAxes(dt, axHandle), dtObjects));
     end
 
     function tgt = getTarget(dtObj)
@@ -3518,14 +3630,52 @@ refreshWorkspaceControls();
             return;
         end
 
-        if isprop(dtObj, 'DataSource') && ~isempty(dtObj.DataSource)
-            tgt = dtObj.DataSource;
+        propNames = {'Target', 'DataSource', 'Host'};
+        for pIdx = 1:numel(propNames)
+            name = propNames{pIdx};
+            if isprop(dtObj, name)
+                try
+                    candidate = dtObj.(name);
+                    if ~isempty(candidate) && isgraphics(candidate)
+                        tgt = candidate;
+                        return;
+                    end
+                catch
+                end
+            end
+        end
+
+        try
+            if isprop(dtObj, 'Parent') && isvalid(dtObj.Parent)
+                parentObj = dtObj.Parent;
+                if isprop(parentObj, 'Host') && ~isempty(parentObj.Host) && isgraphics(parentObj.Host)
+                    tgt = parentObj.Host;
+                    return;
+                end
+            end
+        catch
+        end
+
+        tgt = ancestor(dtObj, 'matlab.graphics.chart.primitive.Line');
+        if isempty(tgt) || ~isvalid(tgt)
+            tgt = [];
+        end
+    end
+
+    function tf = isDatatipOnAxes(dtObj, axHandle)
+        tf = false;
+        if isempty(dtObj) || ~isvalid(dtObj) || isempty(axHandle) || ~isvalid(axHandle)
             return;
         end
 
-        if isprop(dtObj, 'Target') && ~isempty(dtObj.Target)
-            tgt = dtObj.Target;
+        tgt = getTarget(dtObj);
+        if isempty(tgt) || ~isvalid(tgt)
+            targetAxes = ancestor(dtObj, 'axes');
+        else
+            targetAxes = ancestor(tgt, 'axes');
         end
+
+        tf = ~isempty(targetAxes) && isvalid(targetAxes) && isequal(targetAxes, axHandle);
     end
 
     function syncDatatipsFromAxes(subplotIdx)
@@ -3540,7 +3690,7 @@ refreshWorkspaceControls();
         end
 
         for lnIdx = 1:numel(subplotInfo.lines)
-            subplotInfo.lines(lnIdx).datatips = struct('dataIndex', {}, 'position', {}, 'orientation', {});
+            subplotInfo.lines(lnIdx).datatips = struct('dataIndex', {}, 'orientation', {});
         end
 
         dtObjects = findDatatipObjects(axLocal);
@@ -3555,32 +3705,23 @@ refreshWorkspaceControls();
                 continue;
             end
 
-            pos = dt.Position;
-            if numel(pos) < 2
-                continue;
-            end
-
             dataIndex = [];
             tipOrientation = '';
             try
                 dataIndex = dt.DataIndex;
             catch
             end
-            if isempty(dataIndex)
-                xData = safeGetLineData(subplotInfo.lines(lineIdx).handle, 'XData');
-                yData = safeGetLineData(subplotInfo.lines(lineIdx).handle, 'YData');
-                if ~isempty(xData) && ~isempty(yData)
-                    dataIndex = findClosestIndex(xData, yData, pos(1), pos(2));
-                end
+            if isempty(dataIndex) || ~isfinite(dataIndex)
+                continue;
             end
-            if isprop(dt, 'Orientation')
+            if isprop(dt, 'Location')
                 try
-                    tipOrientation = dt.Orientation;
+                    tipOrientation = dt.Location;
                 catch
                 end
             end
 
-            subplotInfo.lines(lineIdx).datatips(end+1) = struct('dataIndex', dataIndex, 'position', pos(1:2), 'orientation', tipOrientation); %#ok<AGROW>
+            subplotInfo.lines(lineIdx).datatips(end+1) = struct('dataIndex', dataIndex, 'orientation', tipOrientation); %#ok<AGROW>
         end
 
         state.subplots(subplotIdx) = subplotInfo;
@@ -3590,30 +3731,18 @@ refreshWorkspaceControls();
         lineInfo = ensureLineDefaults(lineInfo);
         tips = lineInfo.datatips;
         if isempty(tips)
-            tips = struct('dataIndex', {}, 'position', {}, 'orientation', {});
+            tips = struct('dataIndex', {}, 'orientation', {});
             return;
         end
 
-        xVals = lineInfo.xData;
-        if isempty(xVals) && isfield(lineInfo, 'handle') && ~isempty(lineInfo.handle) && isvalid(lineInfo.handle)
-            xVals = safeGetLineData(lineInfo.handle, 'XData');
-        end
-
-        yVals = getDisplayY(lineInfo);
-        if isempty(yVals) && isfield(lineInfo, 'handle') && ~isempty(lineInfo.handle) && isvalid(lineInfo.handle)
-            yVals = safeGetLineData(lineInfo.handle, 'YData');
-        end
+        validMask = arrayfun(@(t) isfield(t, 'dataIndex') && ~isempty(t.dataIndex) && isfinite(t.dataIndex), tips);
+        tips = tips(validMask);
 
         for t = 1:numel(tips)
-            if (~isfield(tips(t), 'position') || numel(tips(t).position) < 2) && ...
-                    isfield(tips(t), 'dataIndex') && ~isempty(tips(t).dataIndex)
-                idx = round(tips(t).dataIndex);
-                if idx >= 1 && idx <= numel(xVals) && idx <= numel(yVals)
-                    tips(t).position = [xVals(idx), yVals(idx)];
-                end
-            end
             if ~isfield(tips(t), 'orientation') || isempty(tips(t).orientation)
-                tips(t).orientation = '';
+                tips(t).orientation = 'auto';
+            else
+                tips(t).orientation = char(string(tips(t).orientation));
             end
         end
     end
@@ -3766,7 +3895,7 @@ refreshWorkspaceControls();
                 end
                 dnEsc = strrep(dn, '''', '''''');
 
-                yExpr = info.yName;
+                yExpr = buildSeriesExpression(info);
                 if isfield(info, 'gain') && isfield(info, 'offset')
                     if info.gain ~= 1
                         yExpr = sprintf('(%g*(%s))', info.gain, yExpr);
@@ -3854,25 +3983,11 @@ refreshWorkspaceControls();
                     if isfield(entry, 'orientation') && ~isempty(entry.orientation)
                         orientationStr = strrep(char(string(entry.orientation)), '''', '''''');
                     end
-                    if isfield(entry, 'dataIndex') && ~isempty(entry.dataIndex) && isfinite(entry.dataIndex)
-                        dtCmd = sprintf('try, dTip = datatip(%s, ''DataIndex'', %d);', lineVarNames{dtIdx}, round(entry.dataIndex));
-                        if ~isempty(orientationStr)
-                            dtCmd = sprintf('%s if isprop(dTip,''Orientation''), dTip.Orientation = ''%s''; end;', dtCmd, orientationStr);
-                        end
-                        dtCmd = sprintf('%s catch, end', dtCmd);
-                        codeLines{end+1} = dtCmd; %#ok<AGROW>
+                    if ~isfield(entry, 'dataIndex') || isempty(entry.dataIndex) || ~isfinite(entry.dataIndex)
                         continue;
                     end
-                    if ~isfield(entry, 'position') || numel(entry.position) < 2
-                        continue;
-                    end
-                    pos = entry.position;
-                    xTip = valueToLiteral(pos(1));
-                    yTip = valueToLiteral(pos(2));
-                    dtCmd = sprintf('try, dTip = datatip(%s, %s, %s);', lineVarNames{dtIdx}, xTip, yTip);
-                    if ~isempty(orientationStr)
-                        dtCmd = sprintf('%s if isprop(dTip,''Orientation''), dTip.Orientation = ''%s''; end;', dtCmd, orientationStr);
-                    end
+
+                    dtCmd = sprintf('try, dTip = datatip(%s, ''DataIndex'', %d, ''Location'', ''%s'');', lineVarNames{dtIdx}, round(entry.dataIndex), orientationStr);
                     dtCmd = sprintf('%s catch, end', dtCmd);
                     codeLines{end+1} = dtCmd; %#ok<AGROW>
                 end
@@ -3885,28 +4000,7 @@ refreshWorkspaceControls();
         try
             clipboard('copy', codeStr);
 
-            % Show transient status text as a bottom-centered popup
-            lblStatus.Text = 'graph generation code copied to clipboard';
-
-            figPos      = fig.Position;
-            toastWidth  = 320;
-            toastHeight = 24;
-            lblStatus.Position = [ (figPos(3) - toastWidth) / 2, ...
-                10, ...
-                toastWidth, ...
-                toastHeight ];
-            lblStatus.Visible = 'on';
-
-            if ~isempty(statusTimer) && isvalid(statusTimer)
-                stop(statusTimer);
-                delete(statusTimer);
-            end
-
-            statusTimer = timer( ...
-                'StartDelay',    2, ...
-                'ExecutionMode', 'singleShot', ...
-                'TimerFcn',      @(~, ~) set(lblStatus, 'Visible', 'off'));
-            start(statusTimer);
+            setStatus('graph generation code copied to clipboard', false);
         catch
             % In case of failure, remain silent to avoid intrusive dialogs
         end
