@@ -1281,7 +1281,13 @@ refreshWorkspaceControls();
                     ylabel(axLocal, subplotInfo.yLabelText);
                     applyAxesTheme(axLocal, idx == state.activeSubplot);
                     subplotInfo.axes = axLocal;
+                    % Redraw content which will create new line handles and
+                    % store them into state.subplots(idx). To avoid losing
+                    % those newly-created handles we must reload the
+                    % updated subplotInfo from state after the redraw.
                     redrawSubplotContent(idx, subplotInfo);
+                    % Refresh local copy so it contains the new line handles
+                    subplotInfo = ensureSubplotStruct(state.subplots(idx));
                 else
                     subplotInfo.axes.Layout.Row    = rIdx;
                     subplotInfo.axes.Layout.Column = cIdx;
@@ -1289,6 +1295,12 @@ refreshWorkspaceControls();
                     applyAxesTheme(subplotInfo.axes, idx == state.activeSubplot);
                 end
                 
+                % Ensure interactivity is applied to the actual line
+                % handles stored in state (not the possibly-stale local
+                % variable). Reload from state just to be safe.
+                if isfield(state, 'subplots') && numel(state.subplots) >= idx
+                    subplotInfo = ensureSubplotStruct(state.subplots(idx));
+                end
                 wireAxesInteractivity(subplotInfo.axes);
                 ensureLineInteractivity(subplotInfo.lines);
                 attachLimitListeners(subplotInfo.axes, idx);
