@@ -224,26 +224,25 @@ rightPanel  = uipanel(mainLayout, 'Title', 'Style / Export', 'BackgroundColor', 
     'Scrollable', 'on');
 rightPanel.Layout.Row    = 1;
 rightPanel.Layout.Column = 3;
+rightPanel.AutoResizeChildren = 'off';
 
-rightLayout = uigridlayout(rightPanel, [3 1]);
-rightLayout.RowHeight = {'fit', 'fit', 'fit'};
+stylesContainer = uipanel(rightPanel, 'BorderType', 'none', 'BackgroundColor', theme.bgPanel);
+stylesContainer.Units = 'pixels';
 
-% Bottom panel: export button + status label
-bottomPanel = uipanel(rightLayout, 'BorderType', 'none', 'BackgroundColor', theme.bgPanel);
-bottomPanel.Layout.Row    = 3;
-bottomPanel.Layout.Column = 1;
-
-bottomLayout = uigridlayout(bottomPanel, [1 2]);
-bottomLayout.ColumnWidth = {'1x', 'fit'};
+stylesLayout = uigridlayout(stylesContainer, [3 1]);
+stylesLayout.RowHeight = {'fit', 'fit', 'fit'};
+stylesLayout.RowSpacing = 10;
+stylesLayout.Padding = [10 10 10 10];
+stylesLayout.BackgroundColor = theme.bgPanel;
 
 % --- Line style panel ---
-linePanel = uipanel(rightLayout, 'Title', 'Line properties', 'BackgroundColor', theme.bgPanel, ...
+linePanel = uipanel(stylesLayout, 'Title', 'Line properties', 'BackgroundColor', theme.bgPanel, ...
     'Scrollable', 'on');
 linePanel.Layout.Row    = 1;
 linePanel.Layout.Column = 1;
 
 lineLayout = uigridlayout(linePanel, [14 3]);
-lineLayout.RowHeight   = {20, 40, 20, 24, 30, 30, 30, 30, 24, 30, 30, 30, 30, '1x'};
+lineLayout.RowHeight   = {20, 40, 20, 24, 30, 30, 30, 30, 24, 30, 30, 30, 30, 'fit'};
 lineLayout.ColumnWidth = {80, '1x', '1x'};
 
 lblLines = uilabel(lineLayout, 'Text', 'Lines:');
@@ -384,7 +383,7 @@ btnRemoveLine.Layout.Row    = 13;
 btnRemoveLine.Layout.Column = [1 3];
 
 % --- Axes properties panel ---
-axesPanel = uipanel(rightLayout, 'Title', 'Axes properties', 'BackgroundColor', theme.bgPanel, ...
+axesPanel = uipanel(stylesLayout, 'Title', 'Axes properties', 'BackgroundColor', theme.bgPanel, ...
     'Scrollable', 'on');
 axesPanel.Layout.Row    = 2;
 axesPanel.Layout.Column = 1;
@@ -393,7 +392,7 @@ axesPanel.Layout.Column = 1;
 % Move the "Axes & scale" header closer to the legend controls and
 % reduce the large spacer that previously pushed the export button off-screen.
 axesLayout = uigridlayout(axesPanel, [8 2]);
-axesLayout.RowHeight   = {20, 30, 20, 30, 20, 24, 155, '1x'};
+axesLayout.RowHeight   = {20, 30, 20, 30, 20, 24, 155, 'fit'};
 axesLayout.ColumnWidth = {100, '1x'};
 
 lblTitle = uilabel(axesLayout, 'Text', 'Title:');
@@ -520,6 +519,16 @@ ddYScale = uidropdown(axesScaleLayout, ...
 ddYScale.Layout.Row    = 4;
 ddYScale.Layout.Column = 4;
 
+% Bottom panel: export button + status label
+bottomPanel = uipanel(stylesLayout, 'BorderType', 'none', 'BackgroundColor', theme.bgPanel);
+bottomPanel.Layout.Row    = 3;
+bottomPanel.Layout.Column = 1;
+
+bottomLayout = uigridlayout(bottomPanel, [1 2]);
+bottomLayout.ColumnWidth = {'1x', 'fit'};
+
+rightPanel.SizeChangedFcn = @(~, ~) updateStylesScrollContainerSize();
+
 % --- Preferences button + Export button ---
 btnPreferences = uibutton(bottomLayout, ...
     'Text', '⚙', ...
@@ -542,12 +551,15 @@ lblStatus = uilabel(fig, ...
     'FontColor', theme.fgText, ...
     'Visible', 'off');
 
+updateStylesScrollContainerSize();
+
 %% App state for theming
 appState = struct();
 appState.hFig           = fig;
 appState.leftPanel      = leftPanel;
 appState.centerPanel    = centerPanel;
 appState.rightPanel     = rightPanel;
+appState.stylesContainer = stylesContainer;
 appState.bottomPanel    = bottomPanel;
 appState.subplotPanel   = subplotPanel;
 appState.actionsPanel   = actionsPanel;
@@ -555,8 +567,9 @@ appState.linePanel      = linePanel;
 appState.axesPanel      = axesPanel;
 appState.axesScalePanel = axesScalePanel;
 appState.centerLayout   = centerLayout;
+appState.stylesLayout   = stylesLayout;
 appState.mainLayout     = mainLayout;
-appState.allLayouts     = [leftLayout, subplotLayout, derivedRow, actionsLayout, centerLayout, rightLayout, bottomLayout, lineLayout, axesLayout];
+appState.allLayouts     = [leftLayout, subplotLayout, derivedRow, actionsLayout, centerLayout, stylesLayout, bottomLayout, lineLayout, axesLayout];
 appState.altLayouts     = axesScaleLayout;
 appState.themeLight     = themeLight;
 appState.themeDark      = themeDark;
@@ -578,7 +591,7 @@ appState.allLists = [ddLayoutMenu, ddXVar, lbYVar, lbLines, ddLineStyle, ddLegen
 appState.allSliders = sldLineWidth;
 appState.xListboxes = ddXVar;
 appState.hSubplotSelector = ddLayoutMenu;
-appState.allPanels = [leftPanel, subplotPanel, actionsPanel, centerPanel, rightPanel, bottomPanel, linePanel, axesPanel, axesScalePanel];
+appState.allPanels = [leftPanel, subplotPanel, actionsPanel, centerPanel, rightPanel, stylesContainer, bottomPanel, linePanel, axesPanel, axesScalePanel];
 appState.statusLabel = lblStatus;
 
 guidata(fig, appState);
@@ -596,6 +609,23 @@ setActiveSubplot(1);
 refreshWorkspaceControls();
 
 %% --- Nested helper and callback functions ---
+
+    function updateStylesScrollContainerSize()
+        if ~(isgraphics(stylesContainer) && isgraphics(rightPanel))
+            return;
+        end
+
+        drawnow limitrate;
+
+        layoutPadding = stylesLayout.Padding;
+        rowSpacing = stylesLayout.RowSpacing;
+        contentHeight = layoutPadding(2) + layoutPadding(4) + ...
+            linePanel.Position(4) + axesPanel.Position(4) + bottomPanel.Position(4) + ...
+            2 * rowSpacing;
+        minHeight = 400;
+        innerPos = rightPanel.InnerPosition;
+        stylesContainer.Position = [0, 0, innerPos(3), max([contentHeight, innerPos(4), minHeight])];
+    end
 
     function applyTheme(appStateLocal)
         if nargin < 1 || ~isstruct(appStateLocal) || ~isfield(appStateLocal, 'currentTheme')
@@ -861,6 +891,8 @@ refreshWorkspaceControls();
             set(ax.Title, 'FontName', fontFig.fontName, 'FontSize', fontFig.fontSize);
             set(ax.Legend, 'FontName', fontFig.fontName, 'FontSize', fontFig.fontSize);
         end
+
+        updateStylesScrollContainerSize();
     end
 
     function onPreferencesClicked(~, ~)
