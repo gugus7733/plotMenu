@@ -34,6 +34,7 @@ state.derivedMode   = false;
 state.derivedChoices = struct('label',{},'expression',{});
 state.originalYBackground = [];
 state.hoverButtons = gobjects(0);
+state.selectedIndexVars = {};
 maximizeTimer = [];
 
 % Light theme (default MATLAB-like)
@@ -135,12 +136,26 @@ lblXVar = uilabel(leftLayout, 'Text', 'X variable:');
 lblXVar.Layout.Row    = 3;
 lblXVar.Layout.Column = 1;
 
-ddXVar = uidropdown(leftLayout, ...
+xSelectionRow = uigridlayout(leftLayout, [1 2]);
+xSelectionRow.ColumnWidth = {'1x', 80};
+xSelectionRow.RowHeight = {'fit'};
+xSelectionRow.ColumnSpacing = 6;
+xSelectionRow.Layout.Row    = 4;
+xSelectionRow.Layout.Column = 1;
+
+ddXVar = uidropdown(xSelectionRow, ...
     'Items', {''}, ...
     'Value', '', ...
     'ValueChangedFcn', @onXSelectionChanged);
-ddXVar.Layout.Row    = 4;
+ddXVar.Layout.Row    = 1;
 ddXVar.Layout.Column = 1;
+
+btnIndexVars = uibutton(xSelectionRow, ...
+    'Text', 'Indices', ...
+    'ButtonPushedFcn', @onOpenIndexDialog, ...
+    'Tooltip', 'Choose integer variables to use as indices');
+btnIndexVars.Layout.Row    = 1;
+btnIndexVars.Layout.Column = 2;
 
 lblYVar = uilabel(leftLayout, 'Text', 'Y variable(s):');
 lblYVar.Layout.Row    = 5;
@@ -579,7 +594,7 @@ appState.fontFigure     = fontFigure;
 appState.currentTheme   = theme;
 appState.prefDialog     = [];
 appState.prefControls   = struct();
-appState.allButtons = [btnRefresh, btnOtherData, btnDerivedNew, btnClear, btnPlot, btnLineOrderDown, btnLineOrderUp, ...
+appState.allButtons = [btnRefresh, btnOtherData, btnIndexVars, btnDerivedNew, btnClear, btnPlot, btnLineOrderDown, btnLineOrderUp, ...
     btnPresetDeg2Rad, btnPresetRad2Deg, tbtnDatatipMode, btnRemoveLine, btnAutoXTicks, btnAutoYTicks, btnExport, btnPreferences];
 appState.allCheckboxes = [chkSubplotSuperpose, chkLineLegend, chkAxisEqual, chkLegend];
 appState.allLabels = [lblLayoutSummary, lblXVar, lblYVar, lblLines, lblLineName, lblLineOrder, lblColor, lblWidth, ...
@@ -593,6 +608,7 @@ appState.xListboxes = ddXVar;
 appState.hSubplotSelector = ddLayoutMenu;
 appState.allPanels = [leftPanel, subplotPanel, actionsPanel, centerPanel, rightPanel, stylesContainer, bottomPanel, linePanel, axesPanel, axesScalePanel];
 appState.statusLabel = lblStatus;
+appState.allLayouts = [appState.allLayouts, xSelectionRow];
 
 guidata(fig, appState);
 applyTheme(appState);
@@ -1682,6 +1698,120 @@ refreshWorkspaceControls();
         refreshWorkspaceControls();
     end
 
+    function onOpenIndexDialog(~, ~)
+        state.workspaceMeta = getWorkspaceSnapshot();
+        sanitizeSelectedIndexVars();
+
+        integerVars = getAllIntegerVariables();
+        if isempty(integerVars)
+            uialert(fig, 'No integer scalar variables found in the base workspace.', 'No indices');
+            return;
+        end
+
+        dlgWidth  = 370;
+        dlgHeight = 300;
+        dialogPos = computeIndexDialogPosition(dlgWidth, dlgHeight);
+
+        dlg = uifigure('Name', 'Select integer indices', ...
+            'Position', dialogPos, 'Color', theme.bgMain);
+        dlg.WindowStyle = 'modal';
+        if isprop(dlg, 'NumberTitle')
+            dlg.NumberTitle = 'off';
+        end
+
+        dlgLayout = uigridlayout(dlg, [2 1]);
+        dlgLayout.RowHeight = {'1x', 'fit'};
+        dlgLayout.ColumnWidth = {'1x'};
+        dlgLayout.Padding = [12 12 12 12];
+        dlgLayout.RowSpacing = 10;
+
+        data = cell(numel(integerVars), 3);
+        for idx = 1:numel(integerVars)
+            data{idx, 1} = integerVars(idx).name;
+            data{idx, 2} = num2str(integerVars(idx).scalarValue);
+            data{idx, 3} = ismember(integerVars(idx).name, state.selectedIndexVars);
+        end
+
+        tbl = uitable(dlgLayout, ...
+            'Data', data, ...
+            'ColumnName', {'Variable', 'Value', 'Use as index'}, ...
+            'ColumnEditable', [false false true], ...
+            'ColumnFormat', {'char', 'char', 'logical'}, ...
+            'RowStriping', 'on');
+        tbl.Layout.Row    = 1;
+        tbl.Layout.Column = 1;
+        tbl.ColumnWidth = {130, 80, 90};
+        tbl.BackgroundColor = themeLight.bgControl;
+        tbl.FontName = currentFont.fontName;
+        tbl.FontSize = currentFont.fontSizeBase;
+
+        btnRow = uigridlayout(dlgLayout, [1 2]);
+        btnRow.ColumnWidth = {'1x', '1x'};
+        btnRow.RowHeight   = {'fit'};
+        btnRow.ColumnSpacing = 10;
+        btnRow.Layout.Row    = 2;
+        btnRow.Layout.Column = 1;
+
+        btnCancel = uibutton(btnRow, 'Text', 'Cancel', ...
+            'ButtonPushedFcn', @(~, ~) close(dlg));
+        btnCancel.Layout.Row    = 1;
+        btnCancel.Layout.Column = 1;
+
+        btnApply = uibutton(btnRow, 'Text', 'Done', ...
+            'ButtonPushedFcn', @onApplySelection);
+        btnApply.Layout.Row    = 1;
+        btnApply.Layout.Column = 2;
+
+        applyLayoutBackground(dlgLayout, themeLight.bgMain);
+        applyLayoutBackground(btnRow, themeLight.bgMain);
+        applyControlStyle(tbl, themeLight.bgControl);
+        applyButtonStyle([btnCancel, btnApply]);
+
+        function onApplySelection(~, ~)
+            selections = tbl.Data;
+            chosen = {};
+            for r = 1:size(selections, 1)
+                if numel(selections(r, :)) < 3 || isempty(selections{r, 3})
+                    continue;
+                end
+                if logical(selections{r, 3})
+                    chosen{end+1} = selections{r, 1}; %#ok<AGROW>
+                end
+            end
+
+            state.selectedIndexVars = chosen;
+            state.workspaceMeta = getWorkspaceSnapshot();
+            sanitizeSelectedIndexVars();
+            close(dlg);
+            updateYListForX();
+        end
+
+        function pos = computeIndexDialogPosition(width, height)
+            figPos = fig.Position;
+            btnPos = [figPos(1) + 100, figPos(2) + figPos(4) - 120, 0, 0];
+            try
+                btnPosLocal = getpixelposition(btnIndexVars, true);
+                if numel(btnPosLocal) == 4
+                    btnPos = [figPos(1) + btnPosLocal(1), figPos(2) + btnPosLocal(2), btnPosLocal(3:4)];
+                end
+            catch
+            end
+
+            desiredX = btnPos(1) + btnPos(3) + 10;
+            desiredY = btnPos(2) + btnPos(4) - height;
+
+            minX = figPos(1) + 10;
+            maxX = figPos(1) + figPos(3) - width - 10;
+            minY = figPos(2) + 10;
+            maxY = figPos(2) + figPos(4) - height - 10;
+
+            x = min(max(desiredX, minX), maxX);
+            y = min(max(desiredY, minY), maxY);
+
+            pos = [x, y, width, height];
+        end
+    end
+
     function onDerivedNew(~, ~)
         if state.derivedMode
             exitDerivedMode(true);
@@ -2077,7 +2207,8 @@ refreshWorkspaceControls();
             exitDerivedMode(true);
         end
         state.workspaceMeta = getWorkspaceSnapshot();
-        
+        sanitizeSelectedIndexVars();
+
         validNames = {state.workspaceMeta([state.workspaceMeta.isValidXCandidate]).name};
         
         if isempty(validNames)
@@ -2896,7 +3027,28 @@ refreshWorkspaceControls();
     end
 
     function integers = getIntegerVariables()
+        sanitizeSelectedIndexVars();
+        if isempty(state.selectedIndexVars)
+            integers = state.workspaceMeta([]);
+            return;
+        end
+
+        mask = arrayfun(@(m) m.isIntegerScalar && ismember(m.name, state.selectedIndexVars), state.workspaceMeta);
+        integers = state.workspaceMeta(mask);
+    end
+
+    function integers = getAllIntegerVariables()
         integers = state.workspaceMeta([state.workspaceMeta.isIntegerScalar]);
+    end
+
+    function sanitizeSelectedIndexVars()
+        if ~isfield(state, 'selectedIndexVars') || isempty(state.selectedIndexVars)
+            state.selectedIndexVars = {};
+            return;
+        end
+
+        availableNames = {state.workspaceMeta([state.workspaceMeta.isIntegerScalar]).name};
+        state.selectedIndexVars = intersect(state.selectedIndexVars, availableNames, 'stable');
     end
 
     function tf = isContainerCandidate(metaEntry)
@@ -2917,8 +3069,9 @@ refreshWorkspaceControls();
                 'Select X variable');
             return;
         end
-        
+
         state.workspaceMeta = getWorkspaceSnapshot();
+        sanitizeSelectedIndexVars();
         candidates = state.workspaceMeta(arrayfun(@(m) isContainerCandidate(m), state.workspaceMeta));
         
         if isempty(candidates)
