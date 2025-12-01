@@ -624,7 +624,12 @@ refreshWorkspaceControls();
             2 * rowSpacing;
         minHeight = 400;
         innerPos = rightPanel.InnerPosition;
-        stylesContainer.Position = [0, 0, innerPos(3), max([contentHeight, innerPos(4), minHeight])];
+
+        hasVerticalScroll = contentHeight > innerPos(4);
+        scrollAllowance = ternary(hasVerticalScroll, 16, 0);
+
+        stylesContainer.Position = [0, 0, max([innerPos(3) - scrollAllowance, 0]), ...
+            max([contentHeight, innerPos(4), minHeight])];
     end
 
     function applyTheme(appStateLocal)
@@ -2323,22 +2328,27 @@ refreshWorkspaceControls();
             kind = 'table';
             return;
         end
-        
+
+        if isa(val, 'timeseries')
+            kind = 'timeseries';
+            return;
+        end
+
         if isstruct(val)
             kind = 'struct';
             return;
         end
-        
+
         if iscell(val)
             kind = 'cell';
             return;
         end
-        
+
         if isSupportedArray(val)
             kind = 'array';
             return;
         end
-        
+
         kind = 'other';
     end
 
@@ -2562,7 +2572,13 @@ refreshWorkspaceControls();
                             end
                         end
                     end
-                    
+
+                case 'timeseries'
+                    [tsLabel, tsExpr, tsDims] = buildTimeseriesCandidate(val, expr, label, xLen);
+                    if ~isempty(tsExpr)
+                        addCandidate(tsLabel, tsExpr, tsDims, rootLabel);
+                    end
+
                 case 'array'
                     sz = size(val);
                     nd = numel(sz);
@@ -2608,7 +2624,55 @@ refreshWorkspaceControls();
                 exploreValue(childVal, childExpr, childLabel, depth + 1, rootLabel);
             end
         end
-        
+
+        function [labelOut, exprOut, dimSizes] = buildTimeseriesCandidate(tsObj, baseExpr, baseLabel, targetLen)
+            labelOut = '';
+            exprOut  = '';
+            dimSizes = [];
+
+            if isempty(tsObj)
+                return;
+            end
+
+            try
+                dataVal = tsObj.Data;
+                timeVal = tsObj.Time;
+            catch
+                return;
+            end
+
+            dataSize = size(dataVal);
+            timeLen  = numel(timeVal);
+            labelOut = baseLabel;
+
+            try
+                tsName = tsObj.Name;
+                if ~isempty(tsName)
+                    labelOut = sprintf('%s (%s)', baseLabel, char(string(tsName)));
+                end
+            catch
+            end
+
+            dimSizes = dataSize;
+            if isempty(targetLen)
+                exprOut = sprintf('%s.Data', baseExpr);
+                return;
+            end
+
+            if isequal(timeLen, targetLen)
+                if ~any(dimSizes == targetLen)
+                    dimSizes = [targetLen, dataSize];
+                end
+                exprOut = sprintf('%s.Data', baseExpr);
+                return;
+            end
+
+            if any(dimSizes == targetLen)
+                exprOut = sprintf('%s.Data', baseExpr);
+                return;
+            end
+        end
+
         function subset = filterIntegerIndices(intVars, upperBound)
             mask = arrayfun(@(v) v.scalarValue >= 1 && v.scalarValue <= upperBound, intVars);
             subset = intVars(mask);
