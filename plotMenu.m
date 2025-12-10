@@ -126,11 +126,24 @@ lblLayoutSummary = uilabel(subplotLayout, ...
 lblLayoutSummary.Layout.Row    = 2;
 lblLayoutSummary.Layout.Column = 1;
 
-btnRefresh = uibutton(leftLayout, ...
+workspaceRow = uigridlayout(leftLayout, [1 2]);
+workspaceRow.ColumnWidth = {'1x', 80};
+workspaceRow.ColumnSpacing = 6;
+workspaceRow.Layout.Row    = 2;
+workspaceRow.Layout.Column = 1;
+
+btnRefresh = uibutton(workspaceRow, ...
     'Text',          'Refresh workspace variables', ...
     'ButtonPushedFcn', @onRefreshWorkspace);
-btnRefresh.Layout.Row    = 2;
+btnRefresh.Layout.Row    = 1;
 btnRefresh.Layout.Column = 1;
+
+btnImportFig = uibutton(workspaceRow, ...
+    'Text', 'Import Fig', ...
+    'ButtonPushedFcn', @onOpenImportFigureDialog, ...
+    'Tooltip', 'Browse workspace for a figure handle');
+btnImportFig.Layout.Row    = 1;
+btnImportFig.Layout.Column = 2;
 
 lblXVar = uilabel(leftLayout, 'Text', 'X variable:');
 lblXVar.Layout.Row    = 3;
@@ -594,7 +607,7 @@ appState.fontFigure     = fontFigure;
 appState.currentTheme   = theme;
 appState.prefDialog     = [];
 appState.prefControls   = struct();
-appState.allButtons = [btnRefresh, btnOtherData, btnIndexVars, btnDerivedNew, btnClear, btnPlot, btnLineOrderDown, btnLineOrderUp, ...
+appState.allButtons = [btnRefresh, btnImportFig, btnOtherData, btnIndexVars, btnDerivedNew, btnClear, btnPlot, btnLineOrderDown, btnLineOrderUp, ...
     btnPresetDeg2Rad, btnPresetRad2Deg, tbtnDatatipMode, btnRemoveLine, btnAutoXTicks, btnAutoYTicks, btnExport, btnPreferences];
 appState.allCheckboxes = [chkSubplotSuperpose, chkLineLegend, chkAxisEqual, chkLegend];
 appState.allLabels = [lblLayoutSummary, lblXVar, lblYVar, lblLines, lblLineName, lblLineOrder, lblColor, lblWidth, ...
@@ -608,7 +621,7 @@ appState.xListboxes = ddXVar;
 appState.hSubplotSelector = ddLayoutMenu;
 appState.allPanels = [leftPanel, subplotPanel, actionsPanel, centerPanel, rightPanel, stylesContainer, bottomPanel, linePanel, axesPanel, axesScalePanel];
 appState.statusLabel = lblStatus;
-appState.allLayouts = [appState.allLayouts, xSelectionRow];
+appState.allLayouts = [appState.allLayouts, xSelectionRow, workspaceRow];
 
 guidata(fig, appState);
 applyTheme(appState);
@@ -617,7 +630,7 @@ leftPanel.TitlePosition  = 'centertop';
 centerPanel.TitlePosition = 'centertop';
 rightPanel.TitlePosition  = 'centertop';
 
-state.hoverButtons = [btnPlot, btnExport, btnClear, btnRefresh];
+state.hoverButtons = [btnPlot, btnExport, btnClear, btnRefresh, btnImportFig];
 
 %% Initialize workspace variables in dropdowns/listbox and create default subplot
 applySubplotGrid(1, 1);
@@ -1698,6 +1711,284 @@ refreshWorkspaceControls();
         refreshWorkspaceControls();
     end
 
+    function onOpenImportFigureDialog(~, ~)
+        baseVars = evalin('base', 'whos');
+
+        dlgWidth  = 420;
+        dlgHeight = 460;
+        dlgPos = computeImportDialogPosition(dlgWidth, dlgHeight);
+
+        dlg = uifigure('Name', 'Import figure from workspace', ...
+            'Position', dlgPos, 'Color', theme.bgMain);
+        dlg.WindowStyle = 'modal';
+        if isprop(dlg, 'NumberTitle')
+            dlg.NumberTitle = 'off';
+        end
+
+        mainGrid = uigridlayout(dlg, [3 1]);
+        mainGrid.RowHeight = {'fit', '1x', 'fit'};
+        mainGrid.ColumnWidth = {'1x'};
+        mainGrid.Padding = [10 10 10 10];
+        mainGrid.RowSpacing = 8;
+
+        intro = uilabel(mainGrid, ...
+            'Text', ['Browse workspace variables manually. Expand cells/structs/arrays as needed and select a figure handle. ', ...
+            'Only expanded branches are evaluated.'], ...
+            'WordWrap', 'on');
+        intro.Layout.Row    = 1;
+        intro.Layout.Column = 1;
+
+        tree = uitree(mainGrid, ...
+            'SelectionChangedFcn', @onTreeSelectionChanged, ...
+            'NodeExpandedFcn', @onNodeExpanded);
+        tree.Layout.Row    = 2;
+        tree.Layout.Column = 1;
+
+        rootNode = uitreenode(tree, 'Text', 'Workspace');
+        rootNode.NodeData = struct('expr', '', 'loaded', true, 'isFigure', false);
+        populateBaseNodes(rootNode, baseVars);
+        expand(rootNode);
+
+        footerGrid = uigridlayout(mainGrid, [2 1]);
+        footerGrid.RowHeight = {'fit', 'fit'};
+        footerGrid.RowSpacing = 6;
+        footerGrid.Layout.Row    = 3;
+        footerGrid.Layout.Column = 1;
+
+        lblSelection = uilabel(footerGrid, 'Text', 'Selected: none', 'WordWrap', 'on');
+        lblSelection.Layout.Row    = 1;
+        lblSelection.Layout.Column = 1;
+
+        btnRow = uigridlayout(footerGrid, [1 2]);
+        btnRow.ColumnWidth = {'1x', '1x'};
+        btnRow.ColumnSpacing = 10;
+        btnRow.Layout.Row    = 2;
+        btnRow.Layout.Column = 1;
+
+        btnCancel = uibutton(btnRow, 'Text', 'Cancel', 'ButtonPushedFcn', @(~, ~) close(dlg));
+        btnCancel.Layout.Row    = 1;
+        btnCancel.Layout.Column = 1;
+
+        btnImport = uibutton(btnRow, 'Text', 'OK', ...
+            'Enable', 'off', ...
+            'ButtonPushedFcn', @onImportSelection);
+        btnImport.Layout.Row    = 1;
+        btnImport.Layout.Column = 2;
+
+        applyLayoutBackground(mainGrid, theme.bgMain);
+        applyLayoutBackground(footerGrid, theme.bgMain);
+        applyLayoutBackground(btnRow, theme.bgMain);
+        applyButtonStyle([btnCancel, btnImport]);
+
+        function populateBaseNodes(parentNode, vars)
+            delete(parentNode.Children);
+            for idxVar = 1:numel(vars)
+                v = vars(idxVar);
+                v.numel = prod(v.size);
+                label = sprintf('%s (%s [%s])', v.name, v.class, sizeToString(v.size));
+                nd = struct('expr', v.name, 'loaded', false, 'isFigure', false, 'isContainer', v.numel > 1 || isContainerMeta(v));
+                child = uitreenode(parentNode, 'Text', label, 'NodeData', nd);
+                if nd.isContainer
+                    addPlaceholder(child);
+                end
+            end
+        end
+
+        function onTreeSelectionChanged(~, evt)
+            if isempty(evt.SelectedNodes)
+                lblSelection.Text = 'Selected: none';
+                btnImport.Enable = 'off';
+                return;
+            end
+
+            node = evt.SelectedNodes(1);
+            [isFig, exprTxt] = resolveFigureSelection(node);
+            if isFig
+                lblSelection.Text = sprintf('Selected: %s', exprTxt);
+                btnImport.Enable = 'on';
+            else
+                lblSelection.Text = sprintf('Selected: %s (not a figure handle)', exprTxt);
+                btnImport.Enable = 'off';
+            end
+        end
+
+        function onNodeExpanded(~, evt)
+            node = evt.Node;
+            data = node.NodeData;
+            if isempty(data) || (isfield(data, 'loaded') && data.loaded)
+                return;
+            end
+
+            removePlaceholders(node);
+
+            [val, ok] = safeEvalExpression(data.expr);
+            if ~ok
+                node.Text = sprintf('%s (unavailable)', node.Text);
+                data.loaded = true;
+                node.NodeData = data;
+                return;
+            end
+
+            createChildrenForValue(node, val, data.expr);
+            data.isFigure = isFigureHandle(val);
+            data.loaded = true;
+            node.NodeData = data;
+
+            % Refresh selection state when expanding a newly marked figure
+            if isequal(tree.SelectedNodes, node)
+                onTreeSelectionChanged([], struct('SelectedNodes', node));
+            end
+        end
+
+        function createChildrenForValue(parentNode, val, expr)
+            if isstruct(val)
+                if numel(val) > 1
+                    addIndexNodes(parentNode, expr, numel(val), 'struct');
+                else
+                    flds = fieldnames(val);
+                    for fIdx = 1:numel(flds)
+                        fldExpr = sprintf('%s.%s', expr, flds{fIdx});
+                        fldVal = val.(flds{fIdx});
+                        addValueNode(parentNode, sprintf('.%s (%s)', flds{fIdx}, class(fldVal)), fldExpr, fldVal);
+                    end
+                end
+                return;
+            end
+
+            if iscell(val)
+                addIndexNodes(parentNode, expr, numel(val), 'cell');
+                return;
+            end
+
+            if isnumeric(val) || islogical(val) || isobject(val)
+                if numel(val) > 1
+                    addIndexNodes(parentNode, expr, numel(val), 'array');
+                end
+                return;
+            end
+        end
+
+        function addIndexNodes(parentNode, baseExpr, totalCount, kind)
+            maxItems = min(50, totalCount);
+            for idx = 1:maxItems
+                switch kind
+                    case 'cell'
+                        childExpr = sprintf('%s{%d}', baseExpr, idx);
+                    otherwise
+                        childExpr = sprintf('%s(%d)', baseExpr, idx);
+                end
+                label = sprintf('%s #%d', kind, idx);
+                addValueNode(parentNode, label, childExpr, []);
+            end
+            if totalCount > maxItems
+                uitreenode(parentNode, 'Text', sprintf('... (%d more elements not listed)', totalCount - maxItems));
+            end
+        end
+
+        function addValueNode(parentNode, label, expr, cachedVal)
+            nodeData = struct('expr', expr, 'loaded', false, 'isFigure', false, 'isContainer', false);
+            if nargin >= 4 && ~isempty(cachedVal)
+                nodeData.isFigure = isFigureHandle(cachedVal);
+                nodeData.loaded = true;
+                nodeData.isContainer = isContainerValue(cachedVal);
+            else
+                nodeData.isContainer = true; % assume expandable until evaluated
+            end
+            child = uitreenode(parentNode, 'Text', label, 'NodeData', nodeData);
+            if nodeData.isContainer
+                addPlaceholder(child);
+            end
+        end
+
+        function onImportSelection(~, ~)
+            sel = tree.SelectedNodes;
+            if isempty(sel)
+                return;
+            end
+
+            expr = sel(1).NodeData.expr;
+            [val, ok] = safeEvalExpression(expr);
+            if ~ok || ~isFigureHandle(val)
+                uialert(dlg, 'The selected entry is not a valid, open figure handle.', 'Invalid selection');
+                return;
+            end
+
+            close(dlg);
+            importFigureIntoPlotMenu(val);
+        end
+
+        function tf = isContainerMeta(metaEntry)
+            tf = ismember(metaEntry.class, {'struct', 'cell', 'table'}) || metaEntry.numel > 1;
+        end
+
+        function tf = isContainerValue(v)
+            tf = isstruct(v) || iscell(v) || (numel(v) > 1);
+        end
+
+        function tf = isFigureHandle(v)
+            tf = isscalar(v) && ishandle(v) && strcmp(get(v, 'Type'), 'figure') && isvalid(v);
+        end
+
+        function addPlaceholder(node)
+            uitreenode(node, 'Text', '(expand to browse)', 'Tag', 'placeholder');
+        end
+
+        function removePlaceholders(node)
+            if isempty(node.Children)
+                return;
+            end
+            keepMask = ~strcmp(get(node.Children, 'Tag'), 'placeholder');
+            delete(node.Children(~keepMask));
+        end
+
+        function [val, ok] = safeEvalExpression(expr)
+            val = [];
+            ok = false;
+            try
+                val = evalin('base', expr);
+                ok = true;
+            catch
+            end
+        end
+
+        function [tf, pathTxt] = resolveFigureSelection(node)
+            pathTxt = 'none';
+            tf = false;
+            if isempty(node) || ~isfield(node, 'NodeData') || isempty(node.NodeData)
+                return;
+            end
+            data = node.NodeData;
+            pathTxt = data.expr;
+            [val, ok] = safeEvalExpression(data.expr);
+            tf = ok && isFigureHandle(val);
+        end
+
+        function pos = computeImportDialogPosition(width, height)
+            figPos = fig.Position;
+            anchor = [figPos(1) + 20, figPos(2) + figPos(4) - 100, 0, 0];
+            try
+                btnPosLocal = getpixelposition(btnRefresh, true);
+                if numel(btnPosLocal) == 4
+                    anchor = [figPos(1) + btnPosLocal(1), figPos(2) + btnPosLocal(2), btnPosLocal(3:4)];
+                end
+            catch
+            end
+
+            desiredX = anchor(1) + anchor(3) + 10;
+            desiredY = anchor(2) + anchor(4) - height;
+
+            minX = figPos(1) + 10;
+            maxX = figPos(1) + figPos(3) - width - 10;
+            minY = figPos(2) + 10;
+            maxY = figPos(2) + figPos(4) - height - 10;
+
+            x = min(max(desiredX, minX), maxX);
+            y = min(max(desiredY, minY), maxY);
+
+            pos = [x, y, width, height];
+        end
+    end
+
     function onOpenIndexDialog(~, ~)
         state.workspaceMeta = getWorkspaceSnapshot();
         sanitizeSelectedIndexVars();
@@ -2481,6 +2772,133 @@ refreshWorkspaceControls();
         end
 
         kind = 'other';
+    end
+
+    function importFigureIntoPlotMenu(hFig)
+        if ~(isscalar(hFig) && ishandle(hFig) && strcmp(get(hFig, 'Type'), 'figure') && isvalid(hFig))
+            uialert(fig, 'Selected handle is not a valid, open figure.', 'Invalid figure');
+            return;
+        end
+
+        axList = findall(hFig, 'Type', 'axes');
+        if isempty(axList)
+            uialert(fig, 'The selected figure has no axes to import.', 'No axes found');
+            return;
+        end
+
+        tags = get(axList, 'Tag');
+        if iscell(tags)
+            mask = ~strcmp(tags, 'legend');
+        else
+            mask = ~strcmp(tags, 'legend');
+        end
+        axList = axList(mask);
+        if isempty(axList)
+            uialert(fig, 'The selected figure has no standard axes to import.', 'No axes found');
+            return;
+        end
+
+        positions = arrayfun(@(ax) get(ax, 'Position'), axList, 'UniformOutput', false);
+        positions = cat(1, positions{:});
+        [~, sortIdx] = sortrows([positions(:, 2), positions(:, 1)], [-1, 1]);
+        axList = axList(sortIdx);
+
+        numAxes = numel(axList);
+        rows = ceil(sqrt(numAxes));
+        cols = ceil(numAxes / rows);
+
+        % Replace current content with imported figure structure
+        applySubplotGrid(rows, cols);
+        for idx = 1:(rows * cols)
+            clearSubplot(idx);
+        end
+
+        for idx = 1:numAxes
+            srcAx = axList(idx);
+            subplotInfo = state.subplots(idx);
+            targetAx = subplotInfo.axes;
+
+            hold(targetAx, 'on');
+            srcLines = findobj(srcAx, 'Type', 'line');
+            newLines = ensureLineDefaults([]);
+
+            for ln = 1:numel(srcLines)
+                srcLine = srcLines(ln);
+                xData = srcLine.XData;
+                yData = srcLine.YData;
+                dn = safeGetDisplayName(srcLine, sprintf('Line %d', ln));
+
+                hNew = plot(targetAx, xData, yData, ...
+                    'LineWidth', srcLine.LineWidth, ...
+                    'LineStyle', srcLine.LineStyle, ...
+                    'Color', srcLine.Color, ...
+                    'Marker', srcLine.Marker, ...
+                    'MarkerSize', srcLine.MarkerSize, ...
+                    'MarkerFaceColor', srcLine.MarkerFaceColor, ...
+                    'MarkerEdgeColor', srcLine.MarkerEdgeColor, ...
+                    'DisplayName', dn);
+
+                wireLineInteractivity(hNew);
+
+                lnInfo = struct();
+                lnInfo.handle = hNew;
+                lnInfo.xName = arrayToLiteral(xData);
+                lnInfo.yName = arrayToLiteral(yData);
+                lnInfo.legend = ~strcmp(get(hNew.Annotation.LegendInformation, 'IconDisplayStyle'), 'off');
+                lnInfo.datatips = struct('dataIndex', {}, 'orientation', {});
+                lnInfo.xData = xData(:);
+                lnInfo.yData = yData(:);
+                lnInfo.gain = 1;
+                lnInfo.offset = 0;
+                lnInfo.color = hNew.Color;
+                lnInfo.lineStyle = hNew.LineStyle;
+                lnInfo.lineWidth = hNew.LineWidth;
+                lnInfo.displayName = dn;
+                lnInfo.ySize = size(yData);
+                lnInfo.sampleDim = 1;
+                lnInfo.seriesIndices = [];
+
+                newLines(end+1) = ensureLineDefaults(lnInfo); %#ok<AGROW>
+            end
+
+            hold(targetAx, 'off');
+
+            subplotInfo.lines = newLines;
+            subplotInfo.titleText = srcAx.Title.String;
+            subplotInfo.xLabelText = srcAx.XLabel.String;
+            subplotInfo.yLabelText = srcAx.YLabel.String;
+            subplotInfo.xLim = srcAx.XLim;
+            subplotInfo.yLim = srcAx.YLim;
+            subplotInfo.xScale = get(srcAx, 'XScale');
+            subplotInfo.yScale = get(srcAx, 'YScale');
+            subplotInfo.axisEqual = strcmp(get(srcAx, 'DataAspectRatioMode'), 'manual');
+            [subplotInfo.legendVisible, subplotInfo.legendLocation] = detectLegendForAxes(srcAx, hFig);
+
+            state.subplots(idx) = subplotInfo;
+            applyAxesConfig(idx);
+            updateLegend(targetAx);
+        end
+
+        setActiveSubplot(1);
+        refreshLineListFromSubplot();
+    end
+
+    function [visible, loc] = detectLegendForAxes(srcAx, srcFig)
+        visible = false;
+        loc = 'best';
+        lgds = findall(srcFig, 'Type', 'legend');
+        for k = 1:numel(lgds)
+            pcs = lgds(k).PlotChildren;
+            if isempty(pcs)
+                continue;
+            end
+            parents = ancestor(pcs, 'axes');
+            if any(parents == srcAx)
+                visible = strcmpi(lgds(k).Visible, 'on');
+                loc = lgds(k).Location;
+                return;
+            end
+        end
     end
 
     function onXSelectionChanged(~, ~)
