@@ -2573,8 +2573,8 @@ refreshWorkspaceControls();
         vars        = state.workspaceMeta;
         integerVars = getIntegerVariables();
         maxDepth    = 3;
-        maxPerRoot  = 80;
-        maxChildren = 20;
+        maxPerRoot  = 200;
+        maxChildren = 200;
         
         candidates = struct('label',{},'expression',{},'dimSizes',{});
         visited = containers.Map('KeyType', 'char', 'ValueType', 'logical');
@@ -2662,45 +2662,62 @@ refreshWorkspaceControls();
                     end
                     
                 case 'table'
-                    tableWidth = width(val);
-                    tableHeight = height(val);
-                    validCols = filterIntegerIndices(integerVars, tableWidth);
-                    validRows = filterIntegerIndices(integerVars, tableHeight);
+                    % tableWidth = width(val);
+                    % tableHeight = height(val);
+                    % validCols = filterIntegerIndices(integerVars, tableWidth);
+                    % validRows = filterIntegerIndices(integerVars, tableHeight);
                     
-                    for idx = 1:min(numel(validCols), maxChildren)
-                        idxName = validCols(idx).name;
-                        colExpr = sprintf('%s{:, %s}', expr, idxName);
-                        colLabel = sprintf('%s{:, %s}', label, idxName);
+                    % for idx = 1:min(numel(validCols), maxChildren)
+                    %     idxName = validCols(idx).name;
+                    %     colExpr = sprintf('%s{:, %s}', expr, idxName);
+                    %     colLabel = sprintf('%s{:, %s}', label, idxName);
+                    %     colVal = safeEval(colExpr);
+                    %     if ~isempty(colVal)
+                    %         exploreValue(colVal, colExpr, colLabel, depth + 1, rootLabel);
+                    %     end
+                    % end
+                    % 
+                    % for idx = 1:min(numel(validRows), maxChildren)
+                    %     idxName = validRows(idx).name;
+                    %     rowExpr = sprintf('%s{%s, :}', expr, idxName);
+                    %     rowLabel = sprintf('%s{%s, :}', label, idxName);
+                    %     rowVal = safeEval(rowExpr);
+                    %     if ~isempty(rowVal)
+                    %         exploreValue(rowVal, rowExpr, rowLabel, depth + 1, rootLabel);
+                    %     end
+                    % end
+                    
+                    % if depth < maxDepth
+                    %     try
+                    %         colNames = val.Properties.VariableNames;
+                    %     catch
+                    %         colNames = {};
+                    %     end
+                    %     for c = 1:min(numel(colNames), maxChildren)
+                    %         colName = colNames{c};
+                    %         colExpr = sprintf('%s.%s', expr, colName);
+                    %         colLabel = sprintf('%s.%s', label, colName);
+                    %         colVal = safeEval(colExpr);
+                    %         if ~isempty(colVal)
+                    %             exploreValue(colVal, colExpr, colLabel, depth + 1, rootLabel);
+                    %         else
+                    %             disp("")
+                    %         end
+                    %     end
+                    % end
+                    
+                    try
+                        colNames = val.Properties.VariableNames;
+                    catch
+                        colNames = {};
+                    end
+                    for c = 1:min(numel(colNames), maxChildren)
+                        colName = colNames{c};
+                        colExpr = sprintf('%s.%s', expr, colName);
+                        colLabel = sprintf('%s.%s', label, colName);
                         colVal = safeEval(colExpr);
                         if ~isempty(colVal)
-                            exploreValue(colVal, colExpr, colLabel, depth + 1, rootLabel);
-                        end
-                    end
-                    
-                    for idx = 1:min(numel(validRows), maxChildren)
-                        idxName = validRows(idx).name;
-                        rowExpr = sprintf('%s{%s, :}', expr, idxName);
-                        rowLabel = sprintf('%s{%s, :}', label, idxName);
-                        rowVal = safeEval(rowExpr);
-                        if ~isempty(rowVal)
-                            exploreValue(rowVal, rowExpr, rowLabel, depth + 1, rootLabel);
-                        end
-                    end
-                    
-                    if depth < maxDepth
-                        try
-                            colNames = val.Properties.VariableNames;
-                        catch
-                            colNames = {};
-                        end
-                        for c = 1:min(numel(colNames), maxChildren)
-                            colName = colNames{c};
-                            colExpr = sprintf('%s.%s', expr, colName);
-                            colLabel = sprintf('%s.%s', label, colName);
-                            colVal = safeEval(colExpr);
-                            if ~isempty(colVal)
-                                exploreValue(colVal, colExpr, colLabel, depth + 1, rootLabel);
-                            end
+                            exploreValue(colVal, colExpr, colLabel, depth+2, rootLabel);
                         end
                     end
 
@@ -2723,10 +2740,14 @@ refreshWorkspaceControls();
                             if idxVal < 1 || idxVal > sz(d)
                                 continue;
                             end
-                            subs = repmat({':'}, 1, nd);
-                            subs{d} = integerVars(idxVar).name;
+                            % subs = repmat({':'}, 1, nd);
+                            % subs{d} = integerVars(idxVar).name;
+                            % sliceExpr = sprintf('%s(%s)', expr, strjoin(subs, ','));
+                            % sliceLabel = sprintf('%s(dim%d=%s)', label, d, integerVars(idxVar).name);
+                            % sliceVal = safeEval(sliceExpr);
+                            subs = {':'};
                             sliceExpr = sprintf('%s(%s)', expr, strjoin(subs, ','));
-                            sliceLabel = sprintf('%s(dim%d=%s)', label, d, integerVars(idxVar).name);
+                            sliceLabel = expr;
                             sliceVal = safeEval(sliceExpr);
                             if ~isempty(sliceVal)
                                 exploreValue(sliceVal, sliceExpr, sliceLabel, depth + 1, rootLabel);
