@@ -2950,7 +2950,8 @@ refreshWorkspaceControls();
 
         positions = arrayfun(@(ax) get(ax, 'Position'), axList, 'UniformOutput', false);
         positions = cat(1, positions{:});
-        [~, sortIdx] = sortrows([positions(:, 2), positions(:, 1)], [-1, 1]);
+        topEdges = positions(:, 2) + positions(:, 4);
+        [~, sortIdx] = sortrows([-topEdges, positions(:, 1)]);
         axList = axList(sortIdx);
 
         numAxes = numel(axList);
@@ -2969,8 +2970,9 @@ refreshWorkspaceControls();
             targetAx = subplotInfo.axes;
 
             legendInfo = detectLegendForAxes(srcAx, hFig);
+            hasLegend = ~isempty(legendInfo.plotChildren);
             hold(targetAx, 'on');
-            children = get(srcAx, 'Children');
+            children = flipud(get(srcAx, 'Children'));
             srcLines = children(arrayfun(@(h) strcmp(get(h, 'Type'), 'line'), children));
             newLines = ensureLineDefaults([]);
 
@@ -3049,16 +3051,17 @@ refreshWorkspaceControls();
             subplotInfo.xMinorGrid = getSafeAxisProp(srcAx, 'XMinorGrid', 'off');
             subplotInfo.yMinorGrid = getSafeAxisProp(srcAx, 'YMinorGrid', 'off');
             subplotInfo.axisEqual = strcmp(get(srcAx, 'DataAspectRatioMode'), 'manual');
-            subplotInfo.legendVisible = legendInfo.visible;
+            subplotInfo.legendVisible = hasLegend;
             subplotInfo.legendLocation = legendInfo.location;
             subplotInfo.legendOrientation = legendInfo.orientation;
             subplotInfo.legendBox = legendInfo.box;
 
+            state.subplots(idx) = subplotInfo;
+            applyAxesTextFromState(idx);
             applyLabelInterpreter(targetAx.Title, srcAx.Title);
             applyLabelInterpreter(targetAx.XLabel, srcAx.XLabel);
             applyLabelInterpreter(targetAx.YLabel, srcAx.YLabel);
 
-            state.subplots(idx) = subplotInfo;
             applyAxesConfig(idx);
             updateLegend(targetAx);
         end
