@@ -2939,11 +2939,9 @@ refreshWorkspaceControls();
         end
 
         tags = get(axList, 'Tag');
-        if iscell(tags)
-            mask = ~strcmp(tags, 'legend');
-        else
-            mask = ~strcmp(tags, 'legend');
-        end
+
+        mask = ~strcmp(tags, 'legend');
+        
         axList = axList(mask);
         if isempty(axList)
             uialert(fig, 'The selected figure has no standard axes to import.', 'No axes found');
