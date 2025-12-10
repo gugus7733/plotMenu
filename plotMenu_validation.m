@@ -1,99 +1,103 @@
-% plotMenu_validation - Toy validation dataset for PlotMenu GUI
-% The script seeds the base workspace with a wide range of sample signals,
-% containers, and labels for manual testing. Extend any section to add new
-% cases without changing the rest of the file.
+% plotMenu_validation - Structured validation dataset for PlotMenu GUI
+% This script seeds the base workspace with a concise, well-documented set of
+% variables that exercise PlotMenu features (X/Y selection, indexing, nested
+% containers, tables, timeseries, etc.). Each section highlights a data type or
+% feature so manual testing feels like running a set of mini unit tests.
+
+%% Section 1: Clear workspace and basic setup
+% Ensures a clean starting point and reproducible random content where needed.
 close all;
 clear;
 clc;
-
-%% Reproducible random seed
 rng(0);
 
-%% Time bases
-basicTime = linspace(0, 2*pi, 250);   % uniform sampling (primary base)
-slowTime  = linspace(0, 8*pi, numel(basicTime)); % slow trends but aligned to base length
-baseTime  = basicTime;                % alias for readability when pairing signals
+%% Section 2: Define integer index variables
+% Tests index selection for cells, structs, tables, and matrices.
+idx_row_1 = 1;       % simple row index
+idx_row_2 = 2;       % alternate row index
+idx_col_1 = int32(1);% first column selector (explicit integer class)
+idx_col_3 = int32(3);% third column selector for multi-column data
+idx_element_5 = uint8(5); % generic element index for vectors/cells
 
-%% Basic deterministic signals
-sineWave      = sin(2*pi*1.2*basicTime);
-cosineWave    = cos(2*pi*0.8*basicTime + pi/6);
-triadWaves    = [sineWave; 0.6 * cos(2*pi*4*basicTime); 0.3 * sin(2*pi*8*basicTime)];
-linearRamp    = 0.1 * basicTime - 0.5;
-quadraticRise = (basicTime - mean(basicTime)).^2;
+%% Section 3: Define simple vectors and matrices (core numeric X/Y signals)
+% Tests basic X/Y selection with row vs column vectors and multi-column matrices.
+vec_time_uniform = linspace(0, 2*pi, 250);            % [1xN] row time base
+vec_time_slow    = linspace(0, 8*pi, numel(vec_time_uniform)); % slower sweep
 
-%% Noisy, discontinuous, and extreme-value cases
-noisySine    = sineWave + 0.15 * randn(size(sineWave));
-stepSignal   = double(baseTime >= pi);
-impulseTrain = zeros(size(baseTime));
-impulseTrain(50:50:end) = 1;
-nanGapSignal = sineWave;
-nanGapSignal(80:120) = NaN;        % missing window for gap-handling checks
-largeSpikeSignal = sineWave;
-largeSpikeSignal(200) = 10;        % outlier to test axis scaling
+vec_signal_sine      = sin(2*pi*1.0*vec_time_uniform);           % [1xN]
+vec_signal_cosine    = cos(2*pi*0.5*vec_time_uniform + pi/4);    % [1xN]
+vec_signal_ramp      = 0.2 * vec_time_uniform - 0.5;             % [1xN]
+vec_signal_noisy     = vec_signal_sine + 0.1 * randn(size(vec_time_uniform));
+vec_signal_nan_gap   = vec_signal_sine; vec_signal_nan_gap(80:120) = NaN; % gap
+vec_signal_outlier   = vec_signal_sine; vec_signal_outlier(200) = 8;      % spike
 
-%% Alternative sampling and mixed units (aligned versions)
-irregularTime = cumsum(0.01 + 0.01 * rand(1, numel(baseTime)));
-chirpLike     = sin(2*pi*(0.2*irregularTime + 0.05*(irregularTime.^2)));
-unitLabels    = ["seconds", "volts", "degrees C"];
+% Matrix with multiple channels to test column selection.
+matrix_signals_3xN = [
+    vec_signal_sine;
+    vec_signal_cosine;
+    vec_signal_ramp
+]; % size 3xN (rows = channels, columns = samples)
 
-% Clearly "bad" timebases for mismatch testing
-badTimeShort = linspace(0, 2*pi, 120);
-badTimeLong  = linspace(0, 4*pi, 400);
-badlyConditionedShort = 2 * mod(badTimeShort * 3 / (2*pi), 1) - 1; % sawtooth-like without toolbox
-badlyConditionedShort = badlyConditionedShort + 0.1 * randn(size(badTimeShort));
-badlyConditionedLong  = sin(0.6 * badTimeLong) + 0.5 * rand(size(badTimeLong));
-badlyConditionedLong(50:60) = NaN; % obvious artifact window
+% Alternative orientation to check row/column handling.
+matrix_signals_Nx3 = matrix_signals_3xN.'; % size Nx3 (columns = channels)
 
-%% Grouped data containers
-signalStruct = struct( ...
-    'time', basicTime, ...
-    'sine', sineWave, ...
-    'cosine', cosineWave, ...
-    'noisy', noisySine, ...
-    'nanGap', nanGapSignal);
+%% Section 4: Define large-dimension matrix / multi-dimensional arrays
+% Tests dimension detection and large matrices without flooding the workspace.
+matrix_large_dimension = reshape(1:2400, [60, 40]); % 60x40 grid
+array_multi_dimensional = reshape(1:360, [6, 5, 12]); % 3-D array to test slice selection
 
-sensors = struct();
-sensors.temperature.C = 20 + 2*sin(0.5*slowTime);
-sensors.humidity.percent = 50 + 5*cos(0.8*slowTime);
-sensors.pressure.hPa = 1013 + 3*sin(0.3*slowTime + 0.4);
+%% Section 5: Define cell arrays
+% Tests cell indexing using integer indices and mixed content handling.
+cell_signals_mixed = {
+    vec_signal_sine, vec_signal_noisy;           % numeric vectors
+    vec_signal_nan_gap, {vec_signal_cosine, 'meta note'}; % nested cell with text
+};
 
-multiChannelMatrix = [sineWave; noisySine; stepSignal; impulseTrain; largeSpikeSignal]';
-channelNames       = {"sine", "noisy", "step", "impulses", "spike"};
-matrixWithMeta    = [sineWave.', noisySine.', linearRamp.'];
+cell_grid_for_indexing = {
+    vec_signal_sine, vec_signal_cosine, vec_signal_ramp;
+    vec_signal_noisy, vec_signal_outlier, vec_signal_nan_gap;
+}; % 2x3 cell array to combine with idx_row/col variables
 
-%% Cell arrays and text-heavy inputs
-cellSignals = { ...
-    sineWave,          noisySine; ...
-    stepSignal,        impulseTrain; ...
-    nanGapSignal,      linearRamp};
+%% Section 6: Define tables
+% Tests table column selection and time alignment.
+vec_temperature = 20 + 2*sin(0.3 * vec_time_slow);
+vec_pressure    = 1013 + 5*cos(0.25 * vec_time_slow + 0.2);
+vec_humidity    = 50 + 10*sin(0.5 * vec_time_slow - 0.1);
 
-descriptions = { ...
-    'Baseline sine', 'Noisy sine'; ...
-    'Unit step',     'Impulse grid'; ...
-    'NaN gap',       'Linear ramp'};
+table_measurements = table(...
+    vec_time_slow.', vec_temperature.', vec_pressure.', vec_humidity.', ...
+    'VariableNames', {'Time', 'Temperature_C', 'Pressure_hPa', 'Humidity_percent'});
 
-%% Integer indices for popup exploration
-colIndex   = int32(2);
-rowIndex   = 3;
-elementIdx = uint8(5);
+% Short table for quick column picking
+vec_short_x = (1:10).';
+vec_short_y = (1:10).' + 5;
+table_short_example = table(vec_short_x, vec_short_y, 'VariableNames', {'Sample', 'Value'});
 
-%% Tables for indexed access
-signalTable = table(basicTime.', sineWave.', noisySine.', linearRamp.', ...
-    'VariableNames', {'time', 'sine', 'noisy', 'ramp'});
-shortTable  = table((1:10).', (1:10).', 'VariableNames', {'shortX', 'shortY'});
+%% Section 7: Define structs / nested structs
+% Tests struct field navigation and nested fields.
+struct_signals = struct(...
+    'time', vec_time_uniform,...
+    'sine', vec_signal_sine,...
+    'cosine', vec_signal_cosine,...
+    'noisy', vec_signal_noisy,...
+    'nan_gap', vec_signal_nan_gap);
 
-%% Struct arrays and nested content
-structArray(1).signal = sineWave;
-structArray(1).label  = 'clean';
-structArray(2).signal = noisySine;
-structArray(2).label  = 'noisy';
-nestedCells = {cellSignals, multiChannelMatrix; descriptions, channelNames};
+struct_experiment.metadata.description = 'Synthetic experiment';
+struct_experiment.metadata.sample_rate_hz = numel(vec_time_uniform) / (vec_time_uniform(end) - vec_time_uniform(1));
+struct_experiment.sensors.temperature = vec_temperature;
+struct_experiment.sensors.pressure = vec_pressure;
+struct_experiment.sensors.humidity = vec_humidity;
+struct_experiment.results.multichannel = matrix_signals_Nx3;
 
-%% Frequency metadata and lookup helpers
-freqListHz   = [0.2, 1, 4, 8, 16];
-freqLabels   = ["very low", "low", "mid", "high", "very high"];
-freqStruct   = struct('labels', freqLabels, 'values', freqListHz);
+%% Section 8: Define timeseries (if applicable)
+% Tests timeseries support with clear names and simple signals.
+ts_temperature = timeseries(vec_temperature.', vec_time_slow.');
+ts_temperature.Name = 'Temperature (C)';
 
-%% Launch the GUI with all variables available for selection
+ts_pressure = timeseries(vec_pressure.', vec_time_slow.');
+ts_pressure.Name = 'Pressure (hPa)';
+
+%% Section 9: Launch PlotMenu
+% Opens GUI with all variables available for selection and manual exploration.
 plotMenu();
 % start_app();
