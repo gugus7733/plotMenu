@@ -1758,6 +1758,8 @@ refreshWorkspaceControls();
         lblSelection = uilabel(footerGrid, 'Text', 'Selected: none', 'WordWrap', 'on');
         lblSelection.Layout.Row    = 1;
         lblSelection.Layout.Column = 1;
+        lblSelection.FontColor = theme.fgText;
+        lblSelection.BackgroundColor = theme.bgMain;
 
         btnRow = uigridlayout(footerGrid, [1 2]);
         btnRow.ColumnWidth = {'1x', '1x'};
@@ -1802,10 +1804,11 @@ refreshWorkspaceControls();
             end
 
             node = evt.SelectedNodes(1);
-            [isFig, exprTxt] = resolveFigureSelection(node);
+            [isFig, exprTxt, figHandle] = resolveFigureSelection(node);
             if isFig
                 lblSelection.Text = sprintf('Selected: %s', exprTxt);
                 btnImport.Enable = 'on';
+                importAndClose(figHandle);
             else
                 lblSelection.Text = sprintf('Selected: %s (not a figure handle)', exprTxt);
                 btnImport.Enable = 'off';
@@ -1913,8 +1916,7 @@ refreshWorkspaceControls();
                 return;
             end
 
-            close(dlg);
-            importFigureIntoPlotMenu(val);
+            importAndClose(val);
         end
 
         function tf = isContainerMeta(metaEntry)
@@ -1926,7 +1928,8 @@ refreshWorkspaceControls();
         end
 
         function tf = isFigureHandle(v)
-            tf = isscalar(v) && ishandle(v) && strcmp(get(v, 'Type'), 'figure') && isvalid(v);
+            tf = isscalar(v) && isvalid(v) && ...
+                ( (ishandle(v) && strcmp(get(v, 'Type'), 'figure')) || isa(v, 'matlab.ui.Figure') );
         end
 
         function addPlaceholder(node)
@@ -1951,10 +1954,11 @@ refreshWorkspaceControls();
             end
         end
 
-        function [tf, pathTxt] = resolveFigureSelection(node)
+        function [tf, pathTxt, val] = resolveFigureSelection(node)
             pathTxt = 'none';
             tf = false;
-            if isempty(node) || ~isfield(node, 'NodeData') || isempty(node.NodeData)
+            val = [];
+            if isempty(node) || ~any(strcmp(fieldnames(node), 'NodeData')) || isempty(node.NodeData)
                 return;
             end
             data = node.NodeData;
@@ -1986,6 +1990,14 @@ refreshWorkspaceControls();
             y = min(max(desiredY, minY), maxY);
 
             pos = [x, y, width, height];
+        end
+
+        function importAndClose(val)
+            if ~ishandle(dlg) || ~isvalid(dlg)
+                return;
+            end
+            close(dlg);
+            importFigureIntoPlotMenu(val);
         end
     end
 
