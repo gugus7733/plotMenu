@@ -35,6 +35,7 @@ state.derivedChoices = struct('label',{},'expression',{});
 state.originalYBackground = [];
 state.hoverButtons = gobjects(0);
 state.selectedIndexVars = {};
+state.customIndexExpressions = {};
 maximizeTimer = [];
 
 % Light theme (default MATLAB-like)
@@ -1701,15 +1702,11 @@ refreshWorkspaceControls();
     function onOpenIndexDialog(~, ~)
         state.workspaceMeta = getWorkspaceSnapshot();
         sanitizeSelectedIndexVars();
+        sanitizeCustomIndexExpressions();
 
         integerVars = getAllIntegerVariables();
-        if isempty(integerVars)
-            uialert(fig, 'No integer scalar variables found in the base workspace.', 'No indices');
-            return;
-        end
-
-        dlgWidth  = 370;
-        dlgHeight = 300;
+        dlgWidth  = 420;
+        dlgHeight = 360;
         dialogPos = computeIndexDialogPosition(dlgWidth, dlgHeight);
 
         dlg = uifigure('Name', 'Select integer indices', ...
@@ -1719,11 +1716,22 @@ refreshWorkspaceControls();
             dlg.NumberTitle = 'off';
         end
 
-        dlgLayout = uigridlayout(dlg, [2 1]);
-        dlgLayout.RowHeight = {'1x', 'fit'};
+        dlgLayout = uigridlayout(dlg, [3 1]);
+        dlgLayout.RowHeight = {'1x', 'fit', 'fit'};
         dlgLayout.ColumnWidth = {'1x'};
         dlgLayout.Padding = [12 12 12 12];
         dlgLayout.RowSpacing = 10;
+
+        integerPanel = uipanel(dlgLayout, 'Title', 'Integer workspace variables', ...
+            'BackgroundColor', themeLight.bgPanel);
+        integerPanel.Layout.Row    = 1;
+        integerPanel.Layout.Column = 1;
+        integerPanel.Scrollable    = 'on';
+
+        tblLayout = uigridlayout(integerPanel, [1 1]);
+        tblLayout.RowHeight = {'fit'};
+        tblLayout.ColumnWidth = {'1x'};
+        tblLayout.Padding = [6 6 6 6];
 
         data = cell(numel(integerVars), 3);
         for idx = 1:numel(integerVars)
@@ -1732,7 +1740,7 @@ refreshWorkspaceControls();
             data{idx, 3} = ismember(integerVars(idx).name, state.selectedIndexVars);
         end
 
-        tbl = uitable(dlgLayout, ...
+        tbl = uitable(tblLayout, ...
             'Data', data, ...
             'ColumnName', {'Variable', 'Value', 'Use as index'}, ...
             'ColumnEditable', [false false true], ...
@@ -1745,11 +1753,55 @@ refreshWorkspaceControls();
         tbl.FontName = currentFont.fontName;
         tbl.FontSize = currentFont.fontSizeBase;
 
+        if isempty(integerVars)
+            tbl.Enable = 'off';
+        end
+
+        customPanel = uipanel(dlgLayout, 'Title', 'Custom index expressions', ...
+            'BackgroundColor', themeLight.bgPanel);
+        customPanel.Layout.Row    = 2;
+        customPanel.Layout.Column = 1;
+
+        customLayout = uigridlayout(customPanel, [2 2]);
+        customLayout.RowHeight = {'fit', '1x'};
+        customLayout.ColumnWidth = {'1x', 90};
+        customLayout.Padding = [6 6 6 6];
+        customLayout.RowSpacing = 8;
+
+        lblHint = uilabel(customLayout, ...
+            'Text', 'Examples: 1:5, [1 3], 1:end, idxCol1:idxCol5-3', ...
+            'WordWrap', 'on');
+        lblHint.Layout.Row    = 1;
+        lblHint.Layout.Column = [1 2];
+
+        minRows = max(numel(state.customIndexExpressions), 3);
+        customData = cell(minRows, 1);
+        for cIdx = 1:numel(state.customIndexExpressions)
+            customData{cIdx, 1} = state.customIndexExpressions{cIdx};
+        end
+
+        tblCustom = uitable(customLayout, ...
+            'Data', customData, ...
+            'ColumnName', {'Expression'}, ...
+            'ColumnEditable', true, ...
+            'RowStriping', 'on');
+        tblCustom.Layout.Row    = 2;
+        tblCustom.Layout.Column = 1;
+        tblCustom.ColumnWidth = {'1x'};
+        tblCustom.BackgroundColor = themeLight.bgControl;
+        tblCustom.FontName = currentFont.fontName;
+        tblCustom.FontSize = currentFont.fontSizeBase;
+
+        btnAddRow = uibutton(customLayout, 'Text', 'Add row', ...
+            'ButtonPushedFcn', @onAddCustomRow);
+        btnAddRow.Layout.Row    = 2;
+        btnAddRow.Layout.Column = 2;
+
         btnRow = uigridlayout(dlgLayout, [1 2]);
         btnRow.ColumnWidth = {'1x', '1x'};
         btnRow.RowHeight   = {'fit'};
         btnRow.ColumnSpacing = 10;
-        btnRow.Layout.Row    = 2;
+        btnRow.Layout.Row    = 3;
         btnRow.Layout.Column = 1;
 
         btnCancel = uibutton(btnRow, 'Text', 'Cancel', ...
@@ -1764,8 +1816,15 @@ refreshWorkspaceControls();
 
         applyLayoutBackground(dlgLayout, themeLight.bgMain);
         applyLayoutBackground(btnRow, themeLight.bgMain);
+        applyLayoutBackground(tblLayout, themeLight.bgPanel);
+        applyLayoutBackground(customLayout, themeLight.bgPanel);
         applyControlStyle(tbl, themeLight.bgControl);
+        applyControlStyle(tblCustom, themeLight.bgControl);
         applyButtonStyle([btnCancel, btnApply]);
+
+        function onAddCustomRow(~, ~)
+            tblCustom.Data(end+1, 1) = {''};
+        end
 
         function onApplySelection(~, ~)
             selections = tbl.Data;
@@ -1780,8 +1839,25 @@ refreshWorkspaceControls();
             end
 
             state.selectedIndexVars = chosen;
+            customEntries = tblCustom.Data;
+            if ischar(customEntries)
+                customEntries = {customEntries};
+            end
+            if ~iscell(customEntries)
+                customEntries = {};
+            end
+            customList = customEntries(:, 1);
+            if ischar(customList)
+                customList = {customList};
+            end
+            customList = customList(~cellfun(@isempty, customList));
+            customList = cellfun(@strtrim, customList, 'UniformOutput', false);
+            customList = customList(~cellfun(@isempty, customList));
+            [~, iaLocal] = unique(customList, 'stable');
+            state.customIndexExpressions = customList(iaLocal).';
             state.workspaceMeta = getWorkspaceSnapshot();
             sanitizeSelectedIndexVars();
+            sanitizeCustomIndexExpressions();
             close(dlg);
             updateYListForX();
         end
@@ -2208,6 +2284,7 @@ refreshWorkspaceControls();
         end
         state.workspaceMeta = getWorkspaceSnapshot();
         sanitizeSelectedIndexVars();
+        sanitizeCustomIndexExpressions();
 
         validNames = {state.workspaceMeta([state.workspaceMeta.isValidXCandidate]).name};
         
@@ -2571,7 +2648,7 @@ refreshWorkspaceControls();
 
     function candidates = discoverBaseCandidates(xLen)
         vars        = state.workspaceMeta;
-        integerVars = getIntegerVariables();
+        indexExprs  = getIndexExpressions();
         maxDepth    = 3;
         maxPerRoot  = 200;
         maxChildren = 200;
@@ -2632,11 +2709,13 @@ refreshWorkspaceControls();
             
             switch kindLocal
                 case 'struct'
-                    if numel(val) > 1
-                        validIdx = filterIntegerIndices(integerVars, numel(val));
-                        for idx = 1:min(numel(validIdx), maxChildren)
-                            idxExpr = validIdx(idx).name;
+                    if numel(val) > 1 && ~isempty(indexExprs)
+                        for idx = 1:min(numel(indexExprs), maxChildren)
+                            idxExpr = indexExprs{idx};
                             childExpr = sprintf('%s(%s)', expr, idxExpr);
+                            if strcmp(childExpr, expr)
+                                continue;
+                            end
                             childLabel = sprintf('%s(%s)', label, idxExpr);
                             childVal = safeEval(childExpr);
                             if isempty(childVal)
@@ -2649,9 +2728,8 @@ refreshWorkspaceControls();
                     end
                     
                 case 'cell'
-                    validIdx = filterIntegerIndices(integerVars, numel(val));
-                    for idx = 1:min(numel(validIdx), maxChildren)
-                        idxExpr = sprintf('{%s}', validIdx(idx).name);
+                    for idx = 1:min(numel(indexExprs), maxChildren)
+                        idxExpr = sprintf('{%s}', indexExprs{idx});
                         childExpr = sprintf('%s%s', expr, idxExpr);
                         childLabel = sprintf('%s%s', label, idxExpr);
                         childVal = safeEval(childExpr);
@@ -2705,7 +2783,25 @@ refreshWorkspaceControls();
                     %         end
                     %     end
                     % end
-                    
+
+                    for idx = 1:min(numel(indexExprs), maxChildren)
+                        idxExpr = indexExprs{idx};
+
+                        colExpr = sprintf('%s{:, %s}', expr, idxExpr);
+                        colLabel = sprintf('%s{:, %s}', label, idxExpr);
+                        colVal = safeEval(colExpr);
+                        if ~isempty(colVal)
+                            exploreValue(colVal, colExpr, colLabel, depth + 1, rootLabel);
+                        end
+
+                        rowExpr = sprintf('%s{%s, :}', expr, idxExpr);
+                        rowLabel = sprintf('%s{%s, :}', label, idxExpr);
+                        rowVal = safeEval(rowExpr);
+                        if ~isempty(rowVal)
+                            exploreValue(rowVal, rowExpr, rowLabel, depth + 1, rootLabel);
+                        end
+                    end
+
                     try
                         colNames = val.Properties.VariableNames;
                     catch
@@ -2731,23 +2827,16 @@ refreshWorkspaceControls();
                     sz = size(val);
                     nd = numel(sz);
                     dimsToUse = 1:min(nd, 3);
-                    for idxVar = 1:min(numel(integerVars), maxChildren)
-                        idxVal = integerVars(idxVar).scalarValue;
-                        if ~isfinite(idxVal)
-                            continue;
-                        end
+                    for idxVar = 1:min(numel(indexExprs), maxChildren)
+                        idxStr = indexExprs{idxVar};
                         for d = dimsToUse
-                            if idxVal < 1 || idxVal > sz(d)
+                            subs = repmat({':'}, 1, nd);
+                            subs{d} = idxStr;
+                            sliceExpr = sprintf('%s(%s)', expr, strjoin(subs, ','));
+                            if strcmp(sliceExpr, expr)
                                 continue;
                             end
-                            % subs = repmat({':'}, 1, nd);
-                            % subs{d} = integerVars(idxVar).name;
-                            % sliceExpr = sprintf('%s(%s)', expr, strjoin(subs, ','));
-                            % sliceLabel = sprintf('%s(dim%d=%s)', label, d, integerVars(idxVar).name);
-                            % sliceVal = safeEval(sliceExpr);
-                            subs = {':'};
-                            sliceExpr = sprintf('%s(%s)', expr, strjoin(subs, ','));
-                            sliceLabel = expr;
+                            sliceLabel = sprintf('%s(%s)', label, strjoin(subs, ','));
                             sliceVal = safeEval(sliceExpr);
                             if ~isempty(sliceVal)
                                 exploreValue(sliceVal, sliceExpr, sliceLabel, depth + 1, rootLabel);
@@ -2825,11 +2914,6 @@ refreshWorkspaceControls();
             end
         end
 
-        function subset = filterIntegerIndices(intVars, upperBound)
-            mask = arrayfun(@(v) v.scalarValue >= 1 && v.scalarValue <= upperBound, intVars);
-            subset = intVars(mask);
-        end
-        
         function out = safeEval(expr)
             try
                 out = evalin('base', expr);
@@ -3049,6 +3133,7 @@ refreshWorkspaceControls();
 
     function integers = getIntegerVariables()
         sanitizeSelectedIndexVars();
+        sanitizeCustomIndexExpressions();
         if isempty(state.selectedIndexVars)
             integers = state.workspaceMeta([]);
             return;
@@ -3070,6 +3155,30 @@ refreshWorkspaceControls();
 
         availableNames = {state.workspaceMeta([state.workspaceMeta.isIntegerScalar]).name};
         state.selectedIndexVars = intersect(state.selectedIndexVars, availableNames, 'stable');
+    end
+
+    function sanitizeCustomIndexExpressions()
+        if ~isfield(state, 'customIndexExpressions') || isempty(state.customIndexExpressions)
+            state.customIndexExpressions = {};
+            return;
+        end
+
+        cleaned = state.customIndexExpressions(:);
+        cleaned = cleaned(~cellfun(@isempty, cleaned));
+        cleaned = strtrim(cleaned);
+        cleaned = cleaned(~cellfun(@isempty, cleaned));
+        [~, ia] = unique(cleaned, 'stable');
+        state.customIndexExpressions = cleaned(ia).';
+    end
+
+    function exprs = getIndexExpressions()
+        sanitizeSelectedIndexVars();
+        sanitizeCustomIndexExpressions();
+
+        exprs = [state.selectedIndexVars(:); state.customIndexExpressions(:)];
+        exprs = exprs(~cellfun(@isempty, exprs));
+        [~, ia] = unique(exprs, 'stable');
+        exprs = exprs(ia);
     end
 
     function tf = isContainerCandidate(metaEntry)
