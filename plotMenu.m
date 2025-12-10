@@ -21,9 +21,10 @@ end
 % Shared state across nested callbacks
 state          = struct();
 statusTimer    = [];
-state.subplots = struct('axes',{},'lines',{},'superpose',{},'legendVisible',{},'legendLocation',{}, ...
-    'axisEqual',{},'xTickSpacing',{},'yTickSpacing',{},'xScale',{},'yScale',{},'limitListeners',{}, ...
-    'titleText',{},'xLabelText',{},'yLabelText',{},'xLim',{},'yLim',{});
+ state.subplots = struct('axes',{},'lines',{},'superpose',{},'legendVisible',{},'legendLocation',{}, ...
+     'legendOrientation',{},'legendBox',{},'axisEqual',{},'xTickSpacing',{},'yTickSpacing',{},'xScale',{},'yScale',{}, ...
+     'xDir',{},'yDir',{},'box',{},'xGrid',{},'yGrid',{},'xMinorGrid',{},'yMinorGrid',{},'limitListeners',{}, ...
+     'titleText',{},'xLabelText',{},'yLabelText',{},'xLim',{},'yLim',{},'zLim',{});
 state.subplotRows = 1;
 state.subplotCols = 1;
 state.activeSubplot = 1;
@@ -1308,21 +1309,31 @@ refreshWorkspaceControls();
         
         defaultSubplot = struct( ...
             'axes',           [], ...
-            'lines',          struct('handle',{},'xName',{},'yName',{},'legend',{},'datatips',{},'xData',{},'yData',{},'gain',{},'offset',{},'color',{},'lineStyle',{},'lineWidth',{},'displayName',{}), ...
+            'lines',          struct('handle',{},'xName',{},'yName',{},'legend',{},'datatips',{},'xData',{},'yData',{},'zData',{},'gain',{},'offset',{},'color',{},'lineStyle',{},'lineWidth',{},'displayName',{},'marker',{},'markerSize',{},'markerEdgeColor',{},'markerFaceColor',{}), ...
             'superpose',      false, ...
             'legendVisible',  true, ...
             'legendLocation', 'best', ...
+            'legendOrientation', 'vertical', ...
+            'legendBox',      'on', ...
             'axisEqual',      false, ...
             'xTickSpacing',   [], ...
             'yTickSpacing',   [], ...
             'xScale',         'linear', ...
             'yScale',         'linear', ...
+            'xDir',           'normal', ...
+            'yDir',           'normal', ...
+            'box',            'on', ...
+            'xGrid',          'on', ...
+            'yGrid',          'on', ...
+            'xMinorGrid',     'off', ...
+            'yMinorGrid',     'off', ...
             'limitListeners', event.listener.empty, ...
             'titleText',      '', ...
             'xLabelText',     '', ...
             'yLabelText',     '', ...
             'xLim',           [], ...
-            'yLim',           []);
+            'yLim',           [], ...
+            'zLim',           []);
         
         targetLength = max(newCount, numel(oldSubplots));
         if isempty(oldSubplots)
@@ -1434,6 +1445,14 @@ refreshWorkspaceControls();
             subplotInfo.yLabelText = axLocal.YLabel.String;
             subplotInfo.xLim       = axLocal.XLim;
             subplotInfo.yLim       = axLocal.YLim;
+            subplotInfo.zLim       = getSafeAxisLimit(axLocal, 'ZLim');
+            subplotInfo.xDir       = getSafeAxisProp(axLocal, 'XDir', 'normal');
+            subplotInfo.yDir       = getSafeAxisProp(axLocal, 'YDir', 'normal');
+            subplotInfo.box        = getSafeAxisProp(axLocal, 'Box', 'on');
+            subplotInfo.xGrid      = getSafeAxisProp(axLocal, 'XGrid', 'on');
+            subplotInfo.yGrid      = getSafeAxisProp(axLocal, 'YGrid', 'on');
+            subplotInfo.xMinorGrid = getSafeAxisProp(axLocal, 'XMinorGrid', 'off');
+            subplotInfo.yMinorGrid = getSafeAxisProp(axLocal, 'YMinorGrid', 'off');
             syncDatatipsFromAxes(idx);
             subplotInfo = ensureSubplotStruct(state.subplots(idx));
         end
@@ -1457,6 +1476,11 @@ refreshWorkspaceControls();
                 lines(ln).legend = strcmp(legendInfo.IconDisplayStyle, 'on');
                 lines(ln).xData  = safeGetLineData(lines(ln).handle, 'XData');
                 lines(ln).yData  = safeGetLineData(lines(ln).handle, 'YData');
+                lines(ln).zData  = safeGetLineData(lines(ln).handle, 'ZData');
+                lines(ln).marker = safeGetLineMarker(lines(ln).handle);
+                lines(ln).markerSize = safeGetLineMarkerSize(lines(ln).handle);
+                lines(ln).markerEdgeColor = safeGetLineMarkerEdge(lines(ln).handle);
+                lines(ln).markerFaceColor = safeGetLineMarkerFace(lines(ln).handle);
             end
             lines(ln).datatips = ensureLineDefaults(lines(ln)).datatips;
         end
@@ -1478,12 +1502,21 @@ refreshWorkspaceControls();
             if isempty(lnInfo.xData) || isempty(lnInfo.yData)
                 continue;
             end
-            
-            hLine = plot(axLocal, lnInfo.xData, lnInfo.yData, ...
-                'LineWidth', lnInfo.lineWidth, ...
+
+            plotArgs = {'LineWidth', lnInfo.lineWidth, ...
                 'LineStyle', lnInfo.lineStyle, ...
                 'Color',     lnInfo.color, ...
-                'DisplayName', lnInfo.displayName);
+                'DisplayName', lnInfo.displayName, ...
+                'Marker', lnInfo.marker, ...
+                'MarkerSize', lnInfo.markerSize, ...
+                'MarkerFaceColor', lnInfo.markerFaceColor, ...
+                'MarkerEdgeColor', lnInfo.markerEdgeColor};
+
+            if ~isempty(lnInfo.zData)
+                hLine = plot3(axLocal, lnInfo.xData, lnInfo.yData, lnInfo.zData, plotArgs{:});
+            else
+                hLine = plot(axLocal, lnInfo.xData, lnInfo.yData, plotArgs{:});
+            end
             subplotInfo.lines(ln).handle = hLine;
             wireLineInteractivity(hLine);
             
@@ -1501,11 +1534,11 @@ refreshWorkspaceControls();
         updateLegend(axLocal);
     end
 
-    function applyAxesTextFromState(idx)
-        if idx < 1 || idx > numel(state.subplots)
-            return;
-        end
-        subplotInfo = ensureSubplotStruct(state.subplots(idx));
+      function applyAxesTextFromState(idx)
+          if idx < 1 || idx > numel(state.subplots)
+              return;
+          end
+          subplotInfo = ensureSubplotStruct(state.subplots(idx));
         axLocal = subplotInfo.axes;
         if ~isValidAxesHandle(axLocal)
             return;
@@ -1607,7 +1640,7 @@ refreshWorkspaceControls();
 
     function lines = getCurrentLines()
         if isempty(state.subplots)
-            lines = struct('handle',{},'xName',{},'yName',{},'legend',{},'datatips',{},'xData',{},'yData',{},'gain',{},'offset',{},'color',{},'lineStyle',{},'lineWidth',{},'displayName',{});
+            lines = struct('handle',{},'xName',{},'yName',{},'legend',{},'datatips',{},'xData',{},'yData',{},'zData',{},'gain',{},'offset',{},'color',{},'lineStyle',{},'lineWidth',{},'displayName',{},'marker',{},'markerSize',{},'markerEdgeColor',{},'markerFaceColor',{});
             return;
         end
         state.subplots(state.activeSubplot) = ensureSubplotStruct(state.subplots(state.activeSubplot));
@@ -1690,7 +1723,7 @@ refreshWorkspaceControls();
         end
         
         subplotInfo.lines = struct('handle',{},'xName',{},'yName',{},'legend',{},'datatips',{}, ...
-            'xData',{},'yData',{},'gain',{},'offset',{},'color',{},'lineStyle',{},'lineWidth',{},'displayName',{});
+            'xData',{},'yData',{},'zData',{},'gain',{},'offset',{},'color',{},'lineStyle',{},'lineWidth',{},'displayName',{},'marker',{},'markerSize',{},'markerEdgeColor',{},'markerFaceColor',{});
         subplotInfo.titleText  = '';
         subplotInfo.xLabelText = '';
         subplotInfo.yLabelText = '';
@@ -1925,11 +1958,6 @@ refreshWorkspaceControls();
 
         function tf = isContainerValue(v)
             tf = isstruct(v) || iscell(v) || (numel(v) > 1);
-        end
-
-        function tf = isFigureHandle(v)
-            tf = isscalar(v) && isvalid(v) && ...
-                ( (ishandle(v) && strcmp(get(v, 'Type'), 'figure')) || isa(v, 'matlab.ui.Figure') );
         end
 
         function addPlaceholder(node)
@@ -2540,12 +2568,18 @@ refreshWorkspaceControls();
     function subplotInfo = ensureSubplotStruct(subplotInfo)
         if ~isfield(subplotInfo, 'lines') || isempty(subplotInfo.lines)
             subplotInfo.lines = struct('handle',{},'xName',{},'yName',{},'legend',{},'datatips',{}, ...
-                'xData',{},'yData',{},'gain',{},'offset',{},'color',{},'lineStyle',{},'lineWidth',{},'displayName',{});
+                'xData',{},'yData',{},'zData',{},'gain',{},'offset',{},'color',{},'lineStyle',{},'lineWidth',{},'displayName',{},'marker',{},'markerSize',{},'markerEdgeColor',{},'markerFaceColor',{});
         end
         subplotInfo.lines = ensureLineDefaults(subplotInfo.lines);
         
         if ~isfield(subplotInfo, 'axisEqual') || isempty(subplotInfo.axisEqual)
             subplotInfo.axisEqual = false;
+        end
+        if ~isfield(subplotInfo, 'legendOrientation') || isempty(subplotInfo.legendOrientation)
+            subplotInfo.legendOrientation = 'vertical';
+        end
+        if ~isfield(subplotInfo, 'legendBox') || isempty(subplotInfo.legendBox)
+            subplotInfo.legendBox = 'on';
         end
         if ~isfield(subplotInfo, 'xTickSpacing')
             subplotInfo.xTickSpacing = [];
@@ -2558,6 +2592,27 @@ refreshWorkspaceControls();
         end
         if ~isfield(subplotInfo, 'yScale') || isempty(subplotInfo.yScale)
             subplotInfo.yScale = 'linear';
+        end
+        if ~isfield(subplotInfo, 'xDir') || isempty(subplotInfo.xDir)
+            subplotInfo.xDir = 'normal';
+        end
+        if ~isfield(subplotInfo, 'yDir') || isempty(subplotInfo.yDir)
+            subplotInfo.yDir = 'normal';
+        end
+        if ~isfield(subplotInfo, 'box') || isempty(subplotInfo.box)
+            subplotInfo.box = 'on';
+        end
+        if ~isfield(subplotInfo, 'xGrid') || isempty(subplotInfo.xGrid)
+            subplotInfo.xGrid = 'on';
+        end
+        if ~isfield(subplotInfo, 'yGrid') || isempty(subplotInfo.yGrid)
+            subplotInfo.yGrid = 'on';
+        end
+        if ~isfield(subplotInfo, 'xMinorGrid') || isempty(subplotInfo.xMinorGrid)
+            subplotInfo.xMinorGrid = 'off';
+        end
+        if ~isfield(subplotInfo, 'yMinorGrid') || isempty(subplotInfo.yMinorGrid)
+            subplotInfo.yMinorGrid = 'off';
         end
         if ~isfield(subplotInfo, 'limitListeners') || isempty(subplotInfo.limitListeners)
             subplotInfo.limitListeners = event.listener.empty;
@@ -2574,15 +2629,41 @@ refreshWorkspaceControls();
         if ~isfield(subplotInfo, 'xLim') || isempty(subplotInfo.xLim)
             subplotInfo.xLim = [];
         end
-        if ~isfield(subplotInfo, 'yLim') || isempty(subplotInfo.yLim)
-            subplotInfo.yLim = [];
-        end
-    end
+          if ~isfield(subplotInfo, 'yLim') || isempty(subplotInfo.yLim)
+              subplotInfo.yLim = [];
+          end
+          if ~isfield(subplotInfo, 'zLim') || isempty(subplotInfo.zLim)
+              subplotInfo.zLim = [];
+          end
+          if ~isempty(subplotInfo.zLim)
+              try
+                  axLocal.ZLim = subplotInfo.zLim;
+              catch
+              end
+          end
+      end
+
+      function lim = getSafeAxisLimit(axHandle, propName)
+          lim = [];
+          try
+              lim = get(axHandle, propName);
+          catch
+          end
+      end
+
+      function val = getSafeAxisProp(axHandle, propName, defaultVal)
+          val = defaultVal;
+          try
+              val = get(axHandle, propName);
+          catch
+          end
+      end
 
     function lines = ensureLineDefaults(lines)
         if nargin < 1 || isempty(lines)
             lines = struct('handle',{},'xName',{},'yName',{},'legend',{},'datatips',{}, ...
-                'xData',{},'yData',{},'gain',{},'offset',{},'color',{},'lineStyle',{},'lineWidth',{},'displayName',{}, ...
+                'xData',{},'yData',{},'zData',{},'gain',{},'offset',{},'color',{},'lineStyle',{},'lineWidth',{},'displayName',{}, ...
+                'marker',{},'markerSize',{},'markerEdgeColor',{},'markerFaceColor',{}, ...
                 'ySize',{},'sampleDim',{},'seriesIndices',{});
             return;
         end
@@ -2628,6 +2709,9 @@ refreshWorkspaceControls();
             if ~isfield(lines(ln), 'yData') || isempty(lines(ln).yData)
                 lines(ln).yData = safeGetLineData(lines(ln).handle, 'YData');
             end
+            if ~isfield(lines(ln), 'zData') || isempty(lines(ln).zData)
+                lines(ln).zData = safeGetLineData(lines(ln).handle, 'ZData');
+            end
             if ~isfield(lines(ln), 'color') || isempty(lines(ln).color)
                 lines(ln).color = safeGetLineColor(lines(ln).handle);
             end
@@ -2639,6 +2723,18 @@ refreshWorkspaceControls();
             end
             if ~isfield(lines(ln), 'displayName') || isempty(lines(ln).displayName)
                 lines(ln).displayName = safeGetDisplayName(lines(ln).handle, lines(ln).yName);
+            end
+            if ~isfield(lines(ln), 'marker') || isempty(lines(ln).marker)
+                lines(ln).marker = safeGetLineMarker(lines(ln).handle);
+            end
+            if ~isfield(lines(ln), 'markerSize') || isempty(lines(ln).markerSize)
+                lines(ln).markerSize = safeGetLineMarkerSize(lines(ln).handle);
+            end
+            if ~isfield(lines(ln), 'markerEdgeColor') || isempty(lines(ln).markerEdgeColor)
+                lines(ln).markerEdgeColor = safeGetLineMarkerEdge(lines(ln).handle);
+            end
+            if ~isfield(lines(ln), 'markerFaceColor') || isempty(lines(ln).markerFaceColor)
+                lines(ln).markerFaceColor = safeGetLineMarkerFace(lines(ln).handle);
             end
             if ~isfield(lines(ln), 'ySize') || isempty(lines(ln).ySize)
                 try
@@ -2700,6 +2796,50 @@ refreshWorkspaceControls();
         end
         try
             lw = hLine.LineWidth;
+        catch
+        end
+    end
+
+    function mk = safeGetLineMarker(hLine)
+        mk = 'none';
+        if isempty(hLine) || ~isvalid(hLine)
+            return;
+        end
+        try
+            mk = hLine.Marker;
+        catch
+        end
+    end
+
+    function sz = safeGetLineMarkerSize(hLine)
+        sz = 6;
+        if isempty(hLine) || ~isvalid(hLine)
+            return;
+        end
+        try
+            sz = hLine.MarkerSize;
+        catch
+        end
+    end
+
+    function col = safeGetLineMarkerEdge(hLine)
+        col = 'auto';
+        if isempty(hLine) || ~isvalid(hLine)
+            return;
+        end
+        try
+            col = hLine.MarkerEdgeColor;
+        catch
+        end
+    end
+
+    function col = safeGetLineMarkerFace(hLine)
+        col = 'auto';
+        if isempty(hLine) || ~isvalid(hLine)
+            return;
+        end
+        try
+            col = hLine.MarkerFaceColor;
         catch
         end
     end
@@ -2787,7 +2927,7 @@ refreshWorkspaceControls();
     end
 
     function importFigureIntoPlotMenu(hFig)
-        if ~(isscalar(hFig) && ishandle(hFig) && strcmp(get(hFig, 'Type'), 'figure') && isvalid(hFig))
+        if ~isFigureHandle(hFig)
             uialert(fig, 'Selected handle is not a valid, open figure.', 'Invalid figure');
             return;
         end
@@ -2830,25 +2970,39 @@ refreshWorkspaceControls();
             subplotInfo = state.subplots(idx);
             targetAx = subplotInfo.axes;
 
+            legendInfo = detectLegendForAxes(srcAx, hFig);
             hold(targetAx, 'on');
-            srcLines = findobj(srcAx, 'Type', 'line');
+            children = get(srcAx, 'Children');
+            srcLines = children(arrayfun(@(h) strcmp(get(h, 'Type'), 'line'), children));
             newLines = ensureLineDefaults([]);
 
             for ln = 1:numel(srcLines)
                 srcLine = srcLines(ln);
                 xData = srcLine.XData;
                 yData = srcLine.YData;
-                dn = safeGetDisplayName(srcLine, sprintf('Line %d', ln));
+                zData = safeGetLineData(srcLine, 'ZData');
+                dn = resolveLegendLabel(srcLine, legendInfo, sprintf('Line %d', ln));
+                iconDisplay = getLegendVisibility(srcLine);
 
-                hNew = plot(targetAx, xData, yData, ...
-                    'LineWidth', srcLine.LineWidth, ...
+                plotArgs = {'LineWidth', srcLine.LineWidth, ...
                     'LineStyle', srcLine.LineStyle, ...
                     'Color', srcLine.Color, ...
                     'Marker', srcLine.Marker, ...
                     'MarkerSize', srcLine.MarkerSize, ...
                     'MarkerFaceColor', srcLine.MarkerFaceColor, ...
                     'MarkerEdgeColor', srcLine.MarkerEdgeColor, ...
-                    'DisplayName', dn);
+                    'DisplayName', dn};
+
+                if ~isempty(zData)
+                    hNew = plot3(targetAx, xData, yData, zData, plotArgs{:});
+                else
+                    hNew = plot(targetAx, xData, yData, plotArgs{:});
+                end
+
+                try
+                    set(hNew.Annotation.LegendInformation, 'IconDisplayStyle', iconDisplay);
+                catch
+                end
 
                 wireLineInteractivity(hNew);
 
@@ -2856,16 +3010,21 @@ refreshWorkspaceControls();
                 lnInfo.handle = hNew;
                 lnInfo.xName = arrayToLiteral(xData);
                 lnInfo.yName = arrayToLiteral(yData);
-                lnInfo.legend = ~strcmp(get(hNew.Annotation.LegendInformation, 'IconDisplayStyle'), 'off');
+                lnInfo.legend = strcmp(iconDisplay, 'on');
                 lnInfo.datatips = struct('dataIndex', {}, 'orientation', {});
                 lnInfo.xData = xData(:);
                 lnInfo.yData = yData(:);
+                lnInfo.zData = zData(:);
                 lnInfo.gain = 1;
                 lnInfo.offset = 0;
                 lnInfo.color = hNew.Color;
                 lnInfo.lineStyle = hNew.LineStyle;
                 lnInfo.lineWidth = hNew.LineWidth;
                 lnInfo.displayName = dn;
+                lnInfo.marker = hNew.Marker;
+                lnInfo.markerSize = hNew.MarkerSize;
+                lnInfo.markerFaceColor = hNew.MarkerFaceColor;
+                lnInfo.markerEdgeColor = hNew.MarkerEdgeColor;
                 lnInfo.ySize = size(yData);
                 lnInfo.sampleDim = 1;
                 lnInfo.seriesIndices = [];
@@ -2881,10 +3040,25 @@ refreshWorkspaceControls();
             subplotInfo.yLabelText = srcAx.YLabel.String;
             subplotInfo.xLim = srcAx.XLim;
             subplotInfo.yLim = srcAx.YLim;
+            subplotInfo.zLim = getSafeAxisLimit(srcAx, 'ZLim');
             subplotInfo.xScale = get(srcAx, 'XScale');
             subplotInfo.yScale = get(srcAx, 'YScale');
+            subplotInfo.xDir = getSafeAxisProp(srcAx, 'XDir', 'normal');
+            subplotInfo.yDir = getSafeAxisProp(srcAx, 'YDir', 'normal');
+            subplotInfo.box = getSafeAxisProp(srcAx, 'Box', 'on');
+            subplotInfo.xGrid = getSafeAxisProp(srcAx, 'XGrid', 'on');
+            subplotInfo.yGrid = getSafeAxisProp(srcAx, 'YGrid', 'on');
+            subplotInfo.xMinorGrid = getSafeAxisProp(srcAx, 'XMinorGrid', 'off');
+            subplotInfo.yMinorGrid = getSafeAxisProp(srcAx, 'YMinorGrid', 'off');
             subplotInfo.axisEqual = strcmp(get(srcAx, 'DataAspectRatioMode'), 'manual');
-            [subplotInfo.legendVisible, subplotInfo.legendLocation] = detectLegendForAxes(srcAx, hFig);
+            subplotInfo.legendVisible = legendInfo.visible;
+            subplotInfo.legendLocation = legendInfo.location;
+            subplotInfo.legendOrientation = legendInfo.orientation;
+            subplotInfo.legendBox = legendInfo.box;
+
+            applyLabelInterpreter(targetAx.Title, srcAx.Title);
+            applyLabelInterpreter(targetAx.XLabel, srcAx.XLabel);
+            applyLabelInterpreter(targetAx.YLabel, srcAx.YLabel);
 
             state.subplots(idx) = subplotInfo;
             applyAxesConfig(idx);
@@ -2893,11 +3067,89 @@ refreshWorkspaceControls();
 
         setActiveSubplot(1);
         refreshLineListFromSubplot();
+
+        function label = resolveLegendLabel(srcLine, legendInfo, fallback)
+            label = safeGetDisplayName(srcLine, fallback);
+            if isempty(legendInfo.plotChildren) || isempty(legendInfo.strings)
+                return;
+            end
+
+            match = find(legendInfo.plotChildren == srcLine, 1);
+            if ~isempty(match) && numel(legendInfo.strings) >= match
+                try
+                    legendStrings = legendInfo.strings;
+                    if iscell(legendStrings)
+                        labelCandidate = legendStrings{match};
+                    else
+                        labelCandidate = legendStrings(match);
+                    end
+                    if ~isempty(labelCandidate)
+                        label = labelCandidate;
+                    end
+                catch
+                end
+            end
+        end
+
+        function iconDisplay = getLegendVisibility(srcLine)
+            iconDisplay = 'on';
+            try
+                iconDisplay = get(srcLine.Annotation.LegendInformation, 'IconDisplayStyle');
+            catch
+            end
+        end
+
+        function applyLabelInterpreter(targetLabel, sourceLabel)
+            try
+                targetLabel.Interpreter = sourceLabel.Interpreter;
+            catch
+            end
+        end
     end
 
-    function [visible, loc] = detectLegendForAxes(srcAx, srcFig)
-        visible = false;
-        loc = 'best';
+    function tf = isFigureHandle(v)
+        tf = false;
+        if ~isscalar(v)
+            return;
+        end
+
+        isFigType = false;
+        handleLike = false;
+        try
+            handleLike = ishandle(v);
+        catch
+            handleLike = false;
+        end
+
+        if ~(handleLike || isa(v, 'matlab.graphics.Graphics') || isa(v, 'matlab.ui.Figure'))
+            return;
+        end
+
+        if handleLike
+            try
+                isFigType = strcmp(get(v, 'Type'), 'figure');
+            catch
+            end
+        end
+
+        if isa(v, 'matlab.ui.Figure')
+            isFigType = true;
+        end
+
+        if ~isFigType
+            return;
+        end
+
+        try
+            tf = isvalid(v);
+        catch
+            tf = false;
+        end
+    end
+
+    function legendInfo = detectLegendForAxes(srcAx, srcFig)
+        legendInfo = struct('visible', false, 'location', 'best', 'orientation', 'vertical', ...
+            'box', 'on', 'strings', {{}}, 'plotChildren', []);
         lgds = findall(srcFig, 'Type', 'legend');
         for k = 1:numel(lgds)
             pcs = lgds(k).PlotChildren;
@@ -2906,8 +3158,12 @@ refreshWorkspaceControls();
             end
             parents = ancestor(pcs, 'axes');
             if any(parents == srcAx)
-                visible = strcmpi(lgds(k).Visible, 'on');
-                loc = lgds(k).Location;
+                legendInfo.visible = strcmpi(lgds(k).Visible, 'on');
+                legendInfo.location = lgds(k).Location;
+                legendInfo.orientation = lgds(k).Orientation;
+                legendInfo.box = lgds(k).Box;
+                legendInfo.strings = lgds(k).String;
+                legendInfo.plotChildren = pcs;
                 return;
             end
         end
@@ -4383,11 +4639,17 @@ refreshWorkspaceControls();
                 catch
                 end
             end
-            
+
             yDisplay = getDisplayY(subplotInfo.lines(ln));
             try
                 set(hLine, 'YData', yDisplay);
             catch
+            end
+            if ~isempty(subplotInfo.lines(ln).zData)
+                try
+                    set(hLine, 'ZData', subplotInfo.lines(ln).zData);
+                catch
+                end
             end
         end
         
@@ -4748,11 +5010,19 @@ refreshWorkspaceControls();
             legend(axHandle, 'off');
             return;
         end
-        
+
         lgd = legend(axHandle, 'show');
         if ~isempty(lgd) && isvalid(lgd)
             lgd.Location = subplotInfo.legendLocation;
             lgd.Visible  = 'on';
+            try
+                lgd.Orientation = subplotInfo.legendOrientation;
+            catch
+            end
+            try
+                lgd.Box = subplotInfo.legendBox;
+            catch
+            end
         end
     end
 
@@ -4812,7 +5082,36 @@ refreshWorkspaceControls();
             subplotInfo.yScale = 'linear';
             set(ax, 'YScale', 'linear');
         end
-        
+
+        try
+            set(ax, 'XDir', subplotInfo.xDir);
+        catch
+        end
+        try
+            set(ax, 'YDir', subplotInfo.yDir);
+        catch
+        end
+        try
+            set(ax, 'Box', subplotInfo.box);
+        catch
+        end
+        try
+            set(ax, 'XGrid', subplotInfo.xGrid);
+            set(ax, 'YGrid', subplotInfo.yGrid);
+        catch
+        end
+        try
+            set(ax, 'XMinorGrid', subplotInfo.xMinorGrid);
+            set(ax, 'YMinorGrid', subplotInfo.yMinorGrid);
+        catch
+        end
+        if ~isempty(subplotInfo.zLim)
+            try
+                zlim(ax, subplotInfo.zLim);
+            catch
+            end
+        end
+
         enforceTickSpacing(subplotIdx);
         applyAxesTheme(ax, subplotIdx == state.activeSubplot);
         state.subplots(subplotIdx) = subplotInfo;
@@ -4916,9 +5215,7 @@ refreshWorkspaceControls();
                 'MinorGridColor', [0.70 0.70 0.70], ...
                 'FontName', fontFigure.fontName, ...
                 'FontSize', fontFigure.fontSize, ...
-                'Box', 'on', ...
                 'LineWidth', lineWidth);
-            grid(ax, 'on');
         catch
         end
     end
