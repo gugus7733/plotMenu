@@ -492,7 +492,7 @@ bottomLayout = uigridlayout(bottomPanel, [3 1]);
 bottomLayout.RowHeight = {'fit', '1x', 'fit'};
 bottomLayout.ColumnWidth = {'1x'};
 bottomLayout.RowSpacing = 10;
-bottomLayout.Padding = [0 0 0 0];
+bottomLayout.Padding = [10 10 10 10];
 
 rightPanel.SizeChangedFcn = @(~, ~) updateStylesScrollContainerSize();
 
@@ -528,15 +528,11 @@ btnImportFigure = uibutton(footerActionsLayout, ...
 btnImportFigure.Layout.Row    = 2;
 btnImportFigure.Layout.Column = 1;
 
-prefIconPath = fullfile(matlabroot, 'toolbox', 'matlab', 'icons', 'tool_preferences.png');
 btnPreferences = uibutton(footerActionsLayout, ...
-    'Text',          '', ...
+    'Text',          char(9881), ...
+    'FontSize',      16, ...
     'Tooltip',       'Preferences', ...
     'ButtonPushedFcn', @onPreferencesClicked);
-if exist(prefIconPath, 'file')
-    btnPreferences.Icon = prefIconPath;
-    btnPreferences.IconAlignment = 'center';
-end
 btnPreferences.Layout.Row    = 2;
 btnPreferences.Layout.Column = 2;
 
@@ -1393,17 +1389,7 @@ fig.CloseRequestFcn = @onCloseRequested;
 
     function slug = generateTimestampSlug()
         ts = datestr(now, 'yyyymmdd_HHMMSS');
-        titleText = '';
-        if ~isempty(state.subplots) && isValidAxesHandle(state.subplots(1).axes)
-            titleText = char(string(state.subplots(1).axes.Title.String));
-        end
-        titleText = regexprep(titleText, '\s+', '_');
-        titleText = regexprep(titleText, '[^a-zA-Z0-9_-]', '');
-        if isempty(titleText)
-            slug = ts;
-        else
-            slug = sprintf('%s_%s', ts, titleText);
-        end
+        slug = ts;
     end
 
     function [pmFig, metadata] = buildFigureSpec(isAutosave, autosaveIndex)
@@ -1800,13 +1786,14 @@ fig.CloseRequestFcn = @onCloseRequested;
         layout.BackgroundColor = theme.bgPanel;
 
         tbl = uitable(layout, ...
-            'ColumnName', {'Name', 'Type', 'Created'}, ...
+            'ColumnName', {'Name'}, ...
             'Data', {}, ...
             'SelectionChangedFcn', @onImportSelectionChanged, ...
             'RowName', []);
         tbl.Layout.Row = 1;
         tbl.Layout.Column = 1;
-        tbl.ColumnWidth = {140, 60, 120};
+        tbl.ColumnWidth = {'1x'};
+        tbl.ForegroundColor = [1 1 1];
 
         previewPanel = uipanel(layout, 'Title', 'Preview', 'BackgroundColor', theme.bgPanel);
         previewPanel.Layout.Row = 1;
@@ -1880,11 +1867,9 @@ fig.CloseRequestFcn = @onCloseRequested;
         entries = listSavedFigures();
         state.importControls.entries = entries;
         if ~isempty(state.importDialog) && isvalid(state.importDialog)
-            data = cell(numel(entries), 3);
+            data = cell(numel(entries), 1);
             for idxLocal = 1:numel(entries)
                 data{idxLocal, 1} = entries(idxLocal).displayName;
-                data{idxLocal, 2} = ternary(entries(idxLocal).isAutosave, 'Autosave', 'Manual');
-                data{idxLocal, 3} = entries(idxLocal).createdAt;
             end
             state.importControls.table.Data = data;
         end
@@ -1902,7 +1887,8 @@ fig.CloseRequestFcn = @onCloseRequested;
             matPath = fullfile(files(idxLocal).folder, files(idxLocal).name);
             pngPath = strrep(matPath, '.plotmenu.mat', '.png');
             entry = struct();
-            entry.displayName = files(idxLocal).name;
+            [~, nameOnly, ~] = fileparts(files(idxLocal).name);
+            entry.displayName = nameOnly;
             entry.matPath = matPath;
             entry.pngPath = pngPath;
             entry.createdAt = datestr(files(idxLocal).datenum, 'yyyy-mm-dd HH:MM:SS');
@@ -1917,10 +1903,6 @@ fig.CloseRequestFcn = @onCloseRequested;
                 end
                 if isstruct(pmFigLocal)
                     entry.dependencies = pmFigLocal.dependencies;
-                    if isfield(pmFigLocal, 'axes') && ~isempty(pmFigLocal.axes) && isfield(pmFigLocal.axes(1), 'title') && ...
-                            ~isempty(pmFigLocal.axes(1).title)
-                        entry.displayName = pmFigLocal.axes(1).title;
-                    end
                     if isfield(pmFigLocal, 'createdAt')
                         entry.createdAt = pmFigLocal.createdAt;
                     end
