@@ -22,3 +22,9 @@ PlotMenu is a MATLAB GUI that lets you quickly pick variables from the base work
 - The GUI logic remains MATLAB-only for simplicity and quick iteration.
 - If you change or extend themes or font settings, update `plotMenu_themeConfig.m` to keep defaults consistent.
 - Keep `plotMenu.m` on the MATLAB path (current folder is enough) so helper functions in the same directory are discoverable.
+
+## PlotMenu figure persistence
+- Quick Save stores a PlotMenu-native figure specification (`*.plotmenu.mat`) plus a PNG preview in a dedicated folder under `prefdir/plotmenu/figures` (with fallbacks to `userpath` or `tempdir`).
+- "Save As..." lets you pick a custom destination for the paired spec + PNG files.
+- The Import Figure manager lists saved figures with thumbnails, allows opening them into PlotMenu, and supports deleting entries.
+- Autosave runs every 5 minutes by default (configurable in Preferences) and rotates a small set of `autosave_*` entries. Autosave uses the same parametric spec and preview so figures can be reopened even when variables are missing.

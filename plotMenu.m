@@ -486,24 +486,66 @@ bottomPanel = uipanel(stylesLayout, 'BorderType', 'none', 'BackgroundColor', the
 bottomPanel.Layout.Row    = 3;
 bottomPanel.Layout.Column = 1;
 
-bottomLayout = uigridlayout(bottomPanel, [1 2]);
-bottomLayout.ColumnWidth = {'1x', 'fit'};
+bottomLayout = uigridlayout(bottomPanel, [2 4]);
+bottomLayout.RowHeight = {30, 30};
+bottomLayout.ColumnWidth = {160, 140, '1x', 40};
 
 rightPanel.SizeChangedFcn = @(~, ~) updateStylesScrollContainerSize();
 
 % --- Preferences button + Export button ---
+btnQuickSave = uibutton(bottomLayout, ...
+    'Text',          'Quick Save', ...
+    'Tooltip',       'Save PlotMenu figure to the default folder', ...
+    'ButtonPushedFcn', @onQuickSave);
+btnQuickSave.Layout.Row    = 1;
+btnQuickSave.Layout.Column = 1;
+
+btnSaveAs = uibutton(bottomLayout, ...
+    'Text',          'Save As...', ...
+    'Tooltip',       'Choose where to save the PlotMenu figure', ...
+    'ButtonPushedFcn', @onSaveAs);
+btnSaveAs.Layout.Row    = 1;
+btnSaveAs.Layout.Column = 2;
+
+btnImportFigure = uibutton(bottomLayout, ...
+    'Text',          'Import Figure', ...
+    'Tooltip',       'Browse saved PlotMenu figures', ...
+    'ButtonPushedFcn', @onOpenImportManager);
+btnImportFigure.Layout.Row    = 1;
+btnImportFigure.Layout.Column = 3;
+
 btnPreferences = uibutton(bottomLayout, ...
     'Text', '⚙', ...
     'Tooltip', 'Preferences', ...
     'ButtonPushedFcn', @onPreferencesClicked);
 btnPreferences.Layout.Row    = 1;
-btnPreferences.Layout.Column = 2;
+btnPreferences.Layout.Column = 4;
 
 btnExport = uibutton(bottomLayout, ...
     'Text',          'Export to MATLAB code', ...
     'ButtonPushedFcn', @onExport);
-btnExport.Layout.Row    = 1;
+btnExport.Layout.Row    = 2;
 btnExport.Layout.Column = 1;
+
+chkAutosave = uicheckbox(bottomLayout, ...
+    'Text', 'Autosave', ...
+    'ValueChangedFcn', @onAutosaveToggled);
+chkAutosave.Layout.Row    = 2;
+chkAutosave.Layout.Column = 2;
+
+lblStorageDir = uilabel(bottomLayout, ...
+    'Text', '', ...
+    'HorizontalAlignment', 'right', ...
+    'Tooltip', 'Current figure storage folder');
+lblStorageDir.Layout.Row    = 2;
+lblStorageDir.Layout.Column = 3;
+
+btnRefreshFigures = uibutton(bottomLayout, ...
+    'Text', '↻', ...
+    'Tooltip', 'Refresh autosave now', ...
+    'ButtonPushedFcn', @(~, ~) triggerAutosave('manual'));
+btnRefreshFigures.Layout.Row    = 2;
+btnRefreshFigures.Layout.Column = 4;
 
 % Status "toast" label (center bottom of the figure)
 lblStatus = uilabel(fig, ...
@@ -542,11 +584,12 @@ appState.currentTheme   = theme;
 appState.prefDialog     = [];
 appState.prefControls   = struct();
 appState.allButtons = [btnRefresh, btnOtherData, btnIndexVars, btnDerivedNew, btnClear, btnPlot, btnLineOrderDown, btnLineOrderUp, ...
-    btnPresetDeg2Rad, btnPresetRad2Deg, tbtnDatatipMode, btnRemoveLine, btnAutoXTicks, btnAutoYTicks, btnExport, btnPreferences];
-appState.allCheckboxes = [chkSubplotSuperpose, chkLineLegend, chkAxisEqual, chkLegend];
+    btnPresetDeg2Rad, btnPresetRad2Deg, tbtnDatatipMode, btnRemoveLine, btnAutoXTicks, btnAutoYTicks, btnExport, btnPreferences, ...
+    btnQuickSave, btnSaveAs, btnImportFigure, chkAutosave, btnRefreshFigures];
+appState.allCheckboxes = [chkSubplotSuperpose, chkLineLegend, chkAxisEqual, chkLegend, chkAutosave];
 appState.allLabels = [lblLayoutSummary, lblXVar, lblYVar, lblLines, lblLineName, lblLineOrder, lblColor, lblWidth, ...
     lblStyle, lblTransform, lblGain, lblOffset, lblTitle, lblXLabel, lblYLabel, lblLegendLoc, lblAxesScaleHeader, lblXTickSpacing, ...
-    lblYTickSpacing, lblXScale, lblYScale];
+    lblYTickSpacing, lblXScale, lblYScale, lblStorageDir];
 appState.allEdits = [edtDerivedName, edtDerivedExpr, edtLineName, edtLineWidth, edtLineGain, edtLineOffset, ...
     edtXTickSpacing, edtYTickSpacing, edtTitle, edtXLabel, edtYLabel];
 appState.allLists = [ddLayoutMenu, ddXVar, lbYVar, lbLines, ddLineStyle, ddLegendLocation, ddXScale, ddYScale];
@@ -570,6 +613,20 @@ state.hoverButtons = [btnPlot, btnExport, btnClear, btnRefresh];
 applySubplotGrid(1, 1);
 setActiveSubplot(1);
 refreshWorkspaceControls();
+
+state.storageDir              = '';
+state.storageDirIsTemporary   = false;
+state.autosaveTimer           = [];
+state.autosaveIntervalMinutes = 5;
+state.autosaveEnabled         = true;
+state.autosaveRotation        = 3;
+state.importDialog            = [];
+state.importControls          = struct();
+state.autosaveStatus          = '';
+state.persistenceWarning      = '';
+initializeStoragePreferences();
+startAutosaveTimer();
+fig.CloseRequestFcn = @onCloseRequested;
 
 %% --- Nested helper and callback functions ---
 
@@ -878,7 +935,7 @@ refreshWorkspaceControls();
         
         % Create new Preferences dialog
         prefDlg = uifigure('Name', 'Preferences', ...
-            'Position', [300 300 400 280], ...
+            'Position', [300 300 520 360], ...
             'Color', theme.bgMain, ...
             'Resize', 'off');
         prefDlg.WindowStyle = 'modal';
@@ -887,8 +944,8 @@ refreshWorkspaceControls();
         end
         
         % Main layout
-        prefLayout = uigridlayout(prefDlg, [6 2]);
-        prefLayout.RowHeight = {'fit', 'fit', 'fit', 'fit', 'fit', 'fit'};
+        prefLayout = uigridlayout(prefDlg, [9 2]);
+        prefLayout.RowHeight = {'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit'};
         prefLayout.ColumnWidth = {150, '1x'};
         prefLayout.BackgroundColor = theme.bgPanel;
         
@@ -953,18 +1010,62 @@ refreshWorkspaceControls();
         edtPrefFontSizeLarge.Layout.Row = 5;
         edtPrefFontSizeLarge.Layout.Column = 2;
         
+        % Storage directory row
+        lblStoragePref = uilabel(prefLayout, 'Text', 'Figure storage:');
+        lblStoragePref.Layout.Row = 6;
+        lblStoragePref.Layout.Column = 1;
+
+        storageDir = state.storageDir;
+        if isempty(storageDir)
+            storageDir = '(not set)';
+        end
+        edtStorageDir = uieditfield(prefLayout, 'text', ...
+            'Value', storageDir, ...
+            'Editable', 'off');
+        edtStorageDir.Layout.Row = 6;
+        edtStorageDir.Layout.Column = 2;
+
+        btnPickStorage = uibutton(prefDlg, ...
+            'Text', 'Choose...', ...
+            'ButtonPushedFcn', @onPrefPickStorage);
+        btnPickStorage.Position = [prefDlg.Position(3) - 110, prefDlg.Position(4) - 185, 90, 24];
+
+        % Autosave settings
+        lblAutosavePref = uilabel(prefLayout, 'Text', 'Enable autosave:');
+        lblAutosavePref.Layout.Row = 7;
+        lblAutosavePref.Layout.Column = 1;
+
+        chkPrefAutosave = uicheckbox(prefLayout, ...
+            'Text', '', ...
+            'Value', state.autosaveEnabled, ...
+            'ValueChangedFcn', @onPrefAutosaveChanged);
+        chkPrefAutosave.Layout.Row = 7;
+        chkPrefAutosave.Layout.Column = 2;
+
+        lblAutosaveInterval = uilabel(prefLayout, 'Text', 'Autosave every (min):');
+        lblAutosaveInterval.Layout.Row = 8;
+        lblAutosaveInterval.Layout.Column = 1;
+
+        edtAutosaveInterval = uieditfield(prefLayout, 'numeric', ...
+            'Value', state.autosaveIntervalMinutes, ...
+            'Limits', [1 120], ...
+            'RoundFractionalValues', 'on', ...
+            'ValueChangedFcn', @onPrefAutosaveIntervalChanged);
+        edtAutosaveInterval.Layout.Row = 8;
+        edtAutosaveInterval.Layout.Column = 2;
+
         % Close Button
         btnPrefClose = uibutton(prefLayout, ...
             'Text', 'Close', ...
             'ButtonPushedFcn', @(~, ~) close(prefDlg));
-        btnPrefClose.Layout.Row = 6;
+        btnPrefClose.Layout.Row = 9;
         btnPrefClose.Layout.Column = [1 2];
         
         % Apply theme to dialog controls
-        applyLabelStyle([lblDarkMode, lblFontFamily, lblFontSizeSmall, lblFontSizeBase, lblFontSizeLarge], theme.bgPanel);
-        applyCheckboxStyle(chkPrefDarkMode, theme.bgPanel);
-        applyControlStyle([ddPrefFontFamily, edtPrefFontSizeSmall, edtPrefFontSizeBase, edtPrefFontSizeLarge], theme.bgControl);
-        applyButtonStyle(btnPrefClose);
+        applyLabelStyle([lblDarkMode, lblFontFamily, lblFontSizeSmall, lblFontSizeBase, lblFontSizeLarge, lblStoragePref, lblAutosavePref, lblAutosaveInterval], theme.bgPanel);
+        applyCheckboxStyle([chkPrefDarkMode, chkPrefAutosave], theme.bgPanel);
+        applyControlStyle([ddPrefFontFamily, edtPrefFontSizeSmall, edtPrefFontSizeBase, edtPrefFontSizeLarge, edtStorageDir, edtAutosaveInterval], theme.bgControl);
+        applyButtonStyle([btnPrefClose, btnPickStorage]);
         
         % Store dialog handles
         appStateLocal.prefDialog = prefDlg;
@@ -973,6 +1074,10 @@ refreshWorkspaceControls();
         appStateLocal.prefControls.edtFontSizeSmall = edtPrefFontSizeSmall;
         appStateLocal.prefControls.edtFontSizeBase = edtPrefFontSizeBase;
         appStateLocal.prefControls.edtFontSizeLarge = edtPrefFontSizeLarge;
+        appStateLocal.prefControls.edtStorageDir = edtStorageDir;
+        appStateLocal.prefControls.chkPrefAutosave = chkPrefAutosave;
+        appStateLocal.prefControls.edtAutosaveInterval = edtAutosaveInterval;
+        appStateLocal.prefControls.btnPickStorage = btnPickStorage;
         guidata(fig, appStateLocal);
         
         % Nested callbacks for Preferences dialog
@@ -1008,10 +1113,10 @@ refreshWorkspaceControls();
                 % Reapply theme to dialog
                 prefLayout.BackgroundColor = theme.bgPanel;
                 prefDlg.Color = theme.bgMain;
-                applyLabelStyle([lblDarkMode, lblFontFamily, lblFontSizeSmall, lblFontSizeBase, lblFontSizeLarge], theme.bgPanel);
-                applyCheckboxStyle(chkPrefDarkMode, theme.bgPanel);
-                applyControlStyle([ddPrefFontFamily, edtPrefFontSizeSmall, edtPrefFontSizeBase, edtPrefFontSizeLarge], theme.bgControl);
-                applyButtonStyle(btnPrefClose);
+                applyLabelStyle([lblDarkMode, lblFontFamily, lblFontSizeSmall, lblFontSizeBase, lblFontSizeLarge, lblStoragePref, lblAutosavePref, lblAutosaveInterval], theme.bgPanel);
+                applyCheckboxStyle([chkPrefDarkMode, chkPrefAutosave], theme.bgPanel);
+                applyControlStyle([ddPrefFontFamily, edtPrefFontSizeSmall, edtPrefFontSizeBase, edtPrefFontSizeLarge, edtStorageDir, edtAutosaveInterval], theme.bgControl);
+                applyButtonStyle([btnPrefClose, btnPickStorage]);
             end
         end
         
@@ -1029,6 +1134,30 @@ refreshWorkspaceControls();
             currentUiFont.(fieldName) = src.Value;
             updateCurrentUiFontProfile(currentUiFont);
             applyTheme(appStateLocal);
+        end
+
+        function onPrefPickStorage(~, ~)
+            newDir = uigetdir(state.storageDir, 'Select PlotMenu figure folder');
+            if isequal(newDir, 0)
+                return;
+            end
+            applyStoragePreference(newDir);
+            if isvalid(edtStorageDir)
+                edtStorageDir.Value = state.storageDir;
+            end
+        end
+
+        function onPrefAutosaveChanged(src, ~)
+            state.autosaveEnabled = logical(src.Value);
+            setpref('PlotMenu', 'autosaveEnabled', state.autosaveEnabled);
+            chkAutosave.Value = state.autosaveEnabled;
+            restartAutosaveTimer();
+        end
+
+        function onPrefAutosaveIntervalChanged(src, ~)
+            state.autosaveIntervalMinutes = max(1, src.Value);
+            setpref('PlotMenu', 'autosaveIntervalMinutes', state.autosaveIntervalMinutes);
+            restartAutosaveTimer();
         end
     end
 
@@ -1084,6 +1213,910 @@ refreshWorkspaceControls();
             'ExecutionMode', 'singleShot', ...
             'TimerFcn',      @(~, ~) set(lblStatus, 'Visible', 'off'));
         start(statusTimer);
+    end
+
+    %% Persistence: storage, save, import, autosave
+    function initializeStoragePreferences()
+        if ispref('PlotMenu', 'storageDir')
+            customDir = getpref('PlotMenu', 'storageDir');
+        else
+            customDir = '';
+        end
+
+        if ispref('PlotMenu', 'autosaveIntervalMinutes')
+            state.autosaveIntervalMinutes = getpref('PlotMenu', 'autosaveIntervalMinutes');
+        end
+        if ispref('PlotMenu', 'autosaveEnabled')
+            state.autosaveEnabled = getpref('PlotMenu', 'autosaveEnabled');
+        end
+        chkAutosave.Value = logical(state.autosaveEnabled);
+
+        [resolvedDir, isTemp, warnMsg] = resolveStorageDir(customDir);
+        state.storageDir = resolvedDir;
+        state.storageDirIsTemporary = isTemp;
+        state.persistenceWarning = warnMsg;
+        if ~isempty(resolvedDir)
+            setpref('PlotMenu', 'storageDir', resolvedDir);
+        end
+        updateStorageDirLabel();
+
+        if ~isempty(warnMsg)
+            setStatus(warnMsg, true);
+        end
+    end
+
+    function applyStoragePreference(newDir)
+        [resolvedDir, isTemp, warnMsg] = resolveStorageDir(newDir);
+        if isempty(resolvedDir)
+            setStatus('Unable to use the selected folder for PlotMenu figures.', true);
+            return;
+        end
+
+        state.storageDir = resolvedDir;
+        state.storageDirIsTemporary = isTemp;
+        state.persistenceWarning = warnMsg;
+        setpref('PlotMenu', 'storageDir', resolvedDir);
+        updateStorageDirLabel();
+        restartAutosaveTimer();
+        if ~isempty(warnMsg)
+            setStatus(warnMsg, true);
+        else
+            setStatus(sprintf('Using %s to store PlotMenu figures.', resolvedDir), false);
+        end
+    end
+
+    function updateStorageDirLabel()
+        folderText = state.storageDir;
+        if isempty(folderText)
+            folderText = '(no folder)';
+        end
+        lblStorageDir.Text = sprintf('Folder: %s', folderText);
+        lblStorageDir.Tooltip = folderText;
+    end
+
+    function [dirPath, isTemporary, warnMsg] = resolveStorageDir(customDir)
+        warnMsg = '';
+        isTemporary = false;
+        dirPath = '';
+
+        candidates = {};
+        if nargin >= 1 && ~isempty(customDir)
+            candidates{end+1} = customDir; %#ok<AGROW>
+        end
+        candidates{end+1} = fullfile(prefdir, 'plotmenu', 'figures'); %#ok<AGROW>
+        userBase = getUserPathBase();
+        if ~isempty(userBase)
+            candidates{end+1} = fullfile(userBase, 'plotmenu', 'figures'); %#ok<AGROW>
+        end
+        candidates{end+1} = fullfile(tempdir, 'plotmenu', 'figures'); %#ok<AGROW>
+
+        for idxLocal = 1:numel(candidates)
+            [ok, usableDir, msg] = ensureWritableDir(candidates{idxLocal});
+            if ok
+                dirPath = usableDir;
+                if idxLocal == numel(candidates)
+                    isTemporary = true;
+                    if isempty(msg)
+                        warnMsg = 'Using a temporary directory; files may be cleared by the system.';
+                    else
+                        warnMsg = msg;
+                    end
+                elseif idxLocal > 1 && isempty(customDir)
+                    warnMsg = 'Falling back to a secondary storage folder.';
+                elseif ~isempty(customDir) && idxLocal > 1
+                    warnMsg = 'Custom storage folder not usable; fell back to a default location.';
+                else
+                    warnMsg = msg;
+                end
+                return;
+            elseif ~isempty(msg)
+                warnMsg = msg;
+            end
+        end
+    end
+
+    function basePath = getUserPathBase()
+        try
+            up = userpath;
+        catch
+            up = '';
+        end
+        if isempty(up)
+            basePath = '';
+            return;
+        end
+        parts = regexp(up, pathsep, 'split');
+        parts = parts(~cellfun(@isempty, parts));
+        if isempty(parts)
+            basePath = '';
+        else
+            basePath = parts{1};
+        end
+    end
+
+    function [ok, usableDir, msg] = ensureWritableDir(dirPath)
+        ok = false;
+        usableDir = dirPath;
+        msg = '';
+        try
+            if isempty(dirPath)
+                msg = 'Empty directory path.';
+                return;
+            end
+            if ~exist(dirPath, 'dir')
+                mkdir(dirPath);
+            end
+            testFile = fullfile(dirPath, sprintf('pm_write_test_%d.tmp', randi(1e6)));
+            fid = fopen(testFile, 'w');
+            if fid == -1
+                msg = 'Directory is not writable.';
+                return;
+            end
+            fprintf(fid, 'ok');
+            fclose(fid);
+            delete(testFile);
+            ok = true;
+        catch ME
+            msg = ME.message;
+            ok = false;
+            usableDir = '';
+        end
+    end
+
+    function onQuickSave(~, ~)
+        performManualSave('quick');
+    end
+
+    function onSaveAs(~, ~)
+        performManualSave('as');
+    end
+
+    function performManualSave(mode)
+        if nargin < 1
+            mode = 'quick';
+        end
+        if isempty(state.storageDir)
+            initializeStoragePreferences();
+        end
+
+        [pmFig, ~] = buildFigureSpec(false, 0);
+        baseDir = state.storageDir;
+        baseName = generateTimestampSlug();
+        if strcmp(mode, 'as')
+            [fileName, filePath] = uiputfile({'*.plotmenu.mat', 'PlotMenu figure (*.plotmenu.mat)'}, ...
+                'Save PlotMenu figure', fullfile(baseDir, [baseName '.plotmenu.mat']));
+            if isequal(fileName, 0)
+                return;
+            end
+            [~, nameOnly, ~] = fileparts(fileName);
+            baseName = nameOnly;
+            baseDir = filePath;
+        end
+
+        [matPath, pngPath] = saveFigureToDirectory(pmFig, baseDir, baseName);
+        if isempty(matPath)
+            setStatus('Failed to save PlotMenu figure.', true);
+            return;
+        end
+        setStatus(sprintf('Saved %s', matPath), false);
+        if ~isempty(pngPath)
+            setStatus('Preview image generated.', false);
+        end
+        refreshImportList();
+    end
+
+    function slug = generateTimestampSlug()
+        ts = datestr(now, 'yyyymmdd_HHMMSS');
+        titleText = '';
+        if ~isempty(state.subplots) && isValidAxesHandle(state.subplots(1).axes)
+            titleText = char(string(state.subplots(1).axes.Title.String));
+        end
+        titleText = regexprep(titleText, '\s+', '_');
+        titleText = regexprep(titleText, '[^a-zA-Z0-9_-]', '');
+        if isempty(titleText)
+            slug = ts;
+        else
+            slug = sprintf('%s_%s', ts, titleText);
+        end
+    end
+
+    function [pmFig, metadata] = buildFigureSpec(isAutosave, autosaveIndex)
+        if nargin < 1
+            isAutosave = false;
+        end
+        if nargin < 2
+            autosaveIndex = 0;
+        end
+
+        for spIdx = 1:numel(state.subplots)
+            captureSubplotState(spIdx);
+        end
+
+        pmFig = struct();
+        pmFig.version         = 1;
+        pmFig.createdAt       = datestr(now, 'yyyy-mm-dd HH:MM:SS');
+        pmFig.matlabVersion   = version;
+        pmFig.plotmenuVersion = 'PlotMenu';
+        pmFig.layout = struct('rows', state.subplotRows, 'cols', state.subplotCols);
+        pmFig.axes   = struct('title', {}, 'xLabel', {}, 'yLabel', {}, 'xScale', {}, 'yScale', {}, 'legendVisible', {}, ...
+            'legendLocation', {}, 'lines', {}, 'xTickSpacing', {}, 'yTickSpacing', {}, 'axisEqual', {}, 'xLim', {}, 'yLim', {}, 'superpose', {});
+        pmFig.dependencies = {};
+        pmFig.snapshot = struct();
+        if isAutosave
+            pmFig.isAutosave = true;
+            pmFig.autosaveIndex = autosaveIndex;
+        else
+            pmFig.isAutosave = false;
+            pmFig.autosaveIndex = 0;
+        end
+
+        allDependencies = {};
+
+        for spIdx = 1:numel(state.subplots)
+            subplotInfo = ensureSubplotStruct(state.subplots(spIdx));
+            axSpec = struct();
+            axSpec.title          = subplotInfo.titleText;
+            axSpec.xLabel         = subplotInfo.xLabelText;
+            axSpec.yLabel         = subplotInfo.yLabelText;
+            axSpec.xScale         = subplotInfo.xScale;
+            axSpec.yScale         = subplotInfo.yScale;
+            axSpec.legendVisible  = subplotInfo.legendVisible;
+            axSpec.legendLocation = subplotInfo.legendLocation;
+            axSpec.xTickSpacing   = subplotInfo.xTickSpacing;
+            axSpec.yTickSpacing   = subplotInfo.yTickSpacing;
+            axSpec.axisEqual      = subplotInfo.axisEqual;
+            axSpec.xLim           = subplotInfo.xLim;
+            axSpec.yLim           = subplotInfo.yLim;
+            axSpec.superpose      = subplotInfo.superpose;
+            axSpec.lines          = struct('xExpr', {}, 'yExpr', {}, 'displayName', {}, 'style', {}, 'snapshot', {}, 'legend', {}, ...
+                'gain', {}, 'offset', {}, 'sampleDim', {}, 'seriesIndices', {}, 'ySize', {}, 'disconnected', {});
+
+            for ln = 1:numel(subplotInfo.lines)
+                lineInfo = ensureLineDefaults(subplotInfo.lines(ln));
+                lnSpec = struct();
+                lnSpec.xExpr = char(string(lineInfo.xName));
+                lnSpec.yExpr = char(string(lineInfo.yName));
+                lnSpec.displayName = char(string(lineInfo.displayName));
+                lnSpec.legend = logical(lineInfo.legend);
+                lnSpec.gain = lineInfo.gain;
+                lnSpec.offset = lineInfo.offset;
+                lnSpec.sampleDim = lineInfo.sampleDim;
+                lnSpec.seriesIndices = lineInfo.seriesIndices;
+                lnSpec.ySize = lineInfo.ySize;
+                lnSpec.disconnected = false;
+
+                lnSpec.style = struct('color', lineInfo.color, 'lineWidth', lineInfo.lineWidth, ...
+                    'lineStyle', lineInfo.lineStyle, 'marker', 'none');
+                lnSpec.snapshot = struct('x', lineInfo.xData, 'y', lineInfo.yData);
+                axSpec.lines(end+1) = lnSpec; %#ok<AGROW>
+
+                allDependencies = [allDependencies, {lnSpec.xExpr, lnSpec.yExpr}]; %#ok<AGROW>
+            end
+
+            pmFig.axes(end+1) = axSpec; %#ok<AGROW>
+        end
+
+        pmFig.dependencies = inferDependencies(allDependencies);
+        metadata = struct('dependencies', {pmFig.dependencies});
+    end
+
+    function deps = inferDependencies(exprList)
+        deps = {};
+        if nargin < 1 || isempty(exprList)
+            return;
+        end
+        exprList = exprList(~cellfun(@isempty, exprList));
+        tokenSet = {};
+        for idxLocal = 1:numel(exprList)
+            tokens = regexp(exprList{idxLocal}, '[A-Za-z][A-Za-z0-9_]*', 'match');
+            for t = 1:numel(tokens)
+                tokenSet{end+1} = tokens{t}; %#ok<AGROW>
+            end
+        end
+        deps = unique(tokenSet);
+    end
+
+    function [matPath, pngPath] = saveFigureToDirectory(pmFig, baseDir, baseName)
+        matPath = '';
+        pngPath = '';
+        if nargin < 3 || isempty(baseName)
+            baseName = generateTimestampSlug();
+        end
+
+        [ok, resolvedDir, msg] = ensureWritableDir(baseDir);
+        if ~ok
+            setStatus('Storage directory is not writable.', true);
+            if ~isempty(msg)
+                setStatus(msg, true);
+            end
+            return;
+        end
+
+        matPath = fullfile(resolvedDir, [baseName '.plotmenu.mat']);
+        pngPath = fullfile(resolvedDir, [baseName '.png']);
+        try
+            pmFigStruct = pmFig; %#ok<NASGU>
+            save(matPath, 'pmFig', 'pmFigStruct');
+        catch ME
+            setStatus(sprintf('Failed to write %s: %s', matPath, ME.message), true);
+            matPath = '';
+            pngPath = '';
+            return;
+        end
+
+        saveFigurePreview(pngPath);
+    end
+
+    function saveFigurePreview(pngPath)
+        if nargin < 1 || isempty(pngPath)
+            return;
+        end
+        try
+            exportgraphics(centerPanel, pngPath, 'Resolution', 144);
+        catch
+            try
+                exportgraphics(fig, pngPath, 'Resolution', 144);
+            catch
+                % If preview fails, keep going silently.
+            end
+        end
+    end
+
+    function onAutosaveToggled(src, ~)
+        state.autosaveEnabled = logical(src.Value);
+        setpref('PlotMenu', 'autosaveEnabled', state.autosaveEnabled);
+        if state.autosaveEnabled
+            restartAutosaveTimer();
+        else
+            stopAutosaveTimer();
+        end
+    end
+
+    function startAutosaveTimer()
+        stopAutosaveTimer();
+        if ~state.autosaveEnabled
+            return;
+        end
+        periodSec = max(1, state.autosaveIntervalMinutes) * 60;
+        state.autosaveTimer = timer('ExecutionMode', 'fixedSpacing', ...
+            'Period', periodSec, ...
+            'TimerFcn', @(~, ~) triggerAutosave('timer'));
+        try
+            start(state.autosaveTimer);
+        catch
+            setStatus('Unable to start autosave timer.', true);
+        end
+    end
+
+    function restartAutosaveTimer()
+        stopAutosaveTimer();
+        startAutosaveTimer();
+    end
+
+    function stopAutosaveTimer()
+        if ~isempty(state.autosaveTimer) && isvalid(state.autosaveTimer)
+            try
+                stop(state.autosaveTimer);
+            catch
+            end
+            try
+                delete(state.autosaveTimer);
+            catch
+            end
+        end
+        state.autosaveTimer = [];
+    end
+
+    function triggerAutosave(reason)
+        if nargin < 1
+            reason = 'timer';
+        end
+
+        if isempty(state.storageDir)
+            initializeStoragePreferences();
+        end
+
+        autosaveIdx = 1;
+        autosaveFiles = dir(fullfile(state.storageDir, 'autosave_*.plotmenu.mat'));
+        if ~isempty(autosaveFiles)
+            autosaveIdx = mod(numel(autosaveFiles), state.autosaveRotation) + 1;
+        end
+
+        try
+            pmFig = buildFigureSpec(true, autosaveIdx);
+            baseName = sprintf('autosave_%d', autosaveIdx);
+            saveFigureToDirectory(pmFig, state.storageDir, baseName);
+            trimAutosaveEntries();
+            if strcmp(reason, 'manual')
+                setStatus('Autosave completed.', false);
+            end
+        catch ME
+            if strcmp(reason, 'manual')
+                setStatus(sprintf('Autosave failed: %s', ME.message), true);
+            end
+        end
+    end
+
+    function trimAutosaveEntries()
+        autosaveFiles = dir(fullfile(state.storageDir, 'autosave_*.plotmenu.mat'));
+        if numel(autosaveFiles) <= state.autosaveRotation
+            return;
+        end
+        [~, order] = sort([autosaveFiles.datenum]);
+        extras = autosaveFiles(order(1:end - state.autosaveRotation));
+        for idxLocal = 1:numel(extras)
+            matFile = fullfile(state.storageDir, extras(idxLocal).name);
+            pngFile = strrep(matFile, '.plotmenu.mat', '.png');
+            safeDeleteFile(matFile);
+            safeDeleteFile(pngFile);
+        end
+    end
+
+    function safeDeleteFile(pathToDelete)
+        if exist(pathToDelete, 'file')
+            try
+                delete(pathToDelete);
+            catch
+            end
+        end
+    end
+
+    function onOpenImportManager(~, ~)
+        openImportManagerDialog();
+    end
+
+    function openImportManagerDialog()
+        if ~isempty(state.importDialog) && isvalid(state.importDialog)
+            figure(state.importDialog);
+            refreshImportList();
+            return;
+        end
+
+        dlg = uifigure('Name', 'Import PlotMenu Figure', ...
+            'Position', [200 200 960 520], ...
+            'Color', theme.bgMain);
+        dlg.Scrollable = 'on';
+        dlg.CloseRequestFcn = @(src, ~) closeImportDialog(src);
+
+        layout = uigridlayout(dlg, [2 2]);
+        layout.RowHeight = {'1x', 'fit'};
+        layout.ColumnWidth = {280, '1x'};
+        layout.BackgroundColor = theme.bgPanel;
+
+        tbl = uitable(layout, ...
+            'ColumnName', {'Name', 'Type', 'Created'}, ...
+            'Data', {}, ...
+            'SelectionChangedFcn', @onImportSelectionChanged, ...
+            'RowName', []);
+        tbl.Layout.Row = 1;
+        tbl.Layout.Column = 1;
+        tbl.ColumnWidth = {140, 60, 120};
+
+        previewPanel = uipanel(layout, 'Title', 'Preview', 'BackgroundColor', theme.bgPanel);
+        previewPanel.Layout.Row = 1;
+        previewPanel.Layout.Column = 2;
+        previewLayout = uigridlayout(previewPanel, [3 1]);
+        previewLayout.RowHeight = {250, 'fit', 'fit'};
+        previewLayout.ColumnWidth = {'1x'};
+
+        imgPreview = uiimage(previewLayout, 'ScaleMethod', 'fit');
+        imgPreview.Layout.Row = 1;
+        imgPreview.Layout.Column = 1;
+
+        lblImportMeta = uilabel(previewLayout, 'Text', 'Select a saved figure to preview.', ...
+            'WordWrap', 'on');
+        lblImportMeta.Layout.Row = 2;
+        lblImportMeta.Layout.Column = 1;
+
+        lblImportStatus = uilabel(previewLayout, 'Text', '', 'WordWrap', 'on');
+        lblImportStatus.Layout.Row = 3;
+        lblImportStatus.Layout.Column = 1;
+
+        actionsPanel = uipanel(layout, 'BorderType', 'none', 'BackgroundColor', theme.bgPanel);
+        actionsPanel.Layout.Row = 2;
+        actionsPanel.Layout.Column = [1 2];
+        actionsLayout = uigridlayout(actionsPanel, [1 4]);
+        actionsLayout.ColumnWidth = {120, 120, 120, '1x'};
+
+        btnOpenFigure = uibutton(actionsLayout, 'Text', 'Open', 'ButtonPushedFcn', @onImportOpen);
+        btnOpenFigure.Layout.Row = 1;
+        btnOpenFigure.Layout.Column = 1;
+
+        btnDeleteFigure = uibutton(actionsLayout, 'Text', 'Delete', 'ButtonPushedFcn', @onImportDelete);
+        btnDeleteFigure.Layout.Row = 1;
+        btnDeleteFigure.Layout.Column = 2;
+
+        btnClearAll = uibutton(actionsLayout, 'Text', 'Delete All', 'ButtonPushedFcn', @onImportClearAll);
+        btnClearAll.Layout.Row = 1;
+        btnClearAll.Layout.Column = 3;
+
+        btnRefreshList = uibutton(actionsLayout, 'Text', 'Refresh', 'ButtonPushedFcn', @(~, ~) refreshImportList());
+        btnRefreshList.Layout.Row = 1;
+        btnRefreshList.Layout.Column = 4;
+
+        applyButtonStyle([btnOpenFigure, btnDeleteFigure, btnRefreshList, btnClearAll]);
+        applyLabelStyle([lblImportMeta, lblImportStatus]);
+        applyPanelStyle([previewPanel, actionsPanel]);
+
+        state.importDialog = dlg;
+        state.importControls = struct('table', tbl, 'img', imgPreview, 'meta', lblImportMeta, ...
+            'status', lblImportStatus, 'entries', [], 'buttons', struct('open', btnOpenFigure, 'delete', btnDeleteFigure));
+        refreshImportList();
+    end
+
+    function closeImportDialog(dlg)
+        try
+            delete(dlg);
+        catch
+        end
+        state.importDialog = [];
+        state.importControls = struct();
+    end
+
+    function refreshImportList()
+        if isempty(state.storageDir) || ~exist(state.storageDir, 'dir')
+            return;
+        end
+        entries = listSavedFigures();
+        state.importControls.entries = entries;
+        if ~isempty(state.importDialog) && isvalid(state.importDialog)
+            data = cell(numel(entries), 3);
+            for idxLocal = 1:numel(entries)
+                data{idxLocal, 1} = entries(idxLocal).displayName;
+                data{idxLocal, 2} = ternary(entries(idxLocal).isAutosave, 'Autosave', 'Manual');
+                data{idxLocal, 3} = entries(idxLocal).createdAt;
+            end
+            state.importControls.table.Data = data;
+        end
+    end
+
+    function entries = listSavedFigures()
+        entries = struct('displayName', {}, 'matPath', {}, 'pngPath', {}, 'createdAt', {}, 'isAutosave', {}, 'dependencies', {});
+        files = dir(fullfile(state.storageDir, '*.plotmenu.mat'));
+        if isempty(files)
+            return;
+        end
+        [~, order] = sort([files.datenum], 'descend');
+        files = files(order);
+        for idxLocal = 1:numel(files)
+            matPath = fullfile(files(idxLocal).folder, files(idxLocal).name);
+            pngPath = strrep(matPath, '.plotmenu.mat', '.png');
+            entry = struct();
+            entry.displayName = files(idxLocal).name;
+            entry.matPath = matPath;
+            entry.pngPath = pngPath;
+            entry.createdAt = datestr(files(idxLocal).datenum, 'yyyy-mm-dd HH:MM:SS');
+            entry.isAutosave = contains(files(idxLocal).name, 'autosave_');
+            entry.dependencies = {};
+            try
+                s = load(matPath, 'pmFigStruct');
+                if isfield(s, 'pmFigStruct')
+                    pmFigLocal = s.pmFigStruct;
+                else
+                    pmFigLocal = s.pmFig;
+                end
+                if isstruct(pmFigLocal)
+                    entry.dependencies = pmFigLocal.dependencies;
+                    if isfield(pmFigLocal, 'axes') && ~isempty(pmFigLocal.axes) && isfield(pmFigLocal.axes(1), 'title') && ...
+                            ~isempty(pmFigLocal.axes(1).title)
+                        entry.displayName = pmFigLocal.axes(1).title;
+                    end
+                    if isfield(pmFigLocal, 'createdAt')
+                        entry.createdAt = pmFigLocal.createdAt;
+                    end
+                end
+            catch
+            end
+            entries(end+1) = entry; %#ok<AGROW>
+        end
+    end
+
+    function onImportSelectionChanged(src, evt)
+        idx = 0;
+        if nargin >= 2 && isfield(evt, 'Indices') && ~isempty(evt.Indices)
+            idx = evt.Indices(1);
+        elseif ~isempty(src.Selection) && size(src.Selection, 1) >= 1
+            idx = src.Selection(1);
+        end
+        showImportPreview(idx);
+    end
+
+    function showImportPreview(idx)
+        if isempty(state.importControls) || idx < 1 || idx > numel(state.importControls.entries)
+            return;
+        end
+        entry = state.importControls.entries(idx);
+        if isgraphics(state.importControls.img)
+            if exist(entry.pngPath, 'file')
+                state.importControls.img.ImageSource = entry.pngPath;
+            else
+                state.importControls.img.ImageSource = '';
+            end
+        end
+        depText = '';
+        missingDeps = {};
+        if ~isempty(entry.dependencies)
+            depText = sprintf('Dependencies: %s', strjoin(entry.dependencies, ', '));
+            missingDeps = findMissingDependencies(entry.dependencies);
+        end
+        if isempty(depText)
+            depText = 'No dependency information available.';
+        end
+
+        if isgraphics(state.importControls.meta)
+            state.importControls.meta.Text = sprintf('%s\nSaved at %s', entry.displayName, entry.createdAt);
+        end
+        if isgraphics(state.importControls.status)
+            if isempty(missingDeps)
+                state.importControls.status.Text = depText;
+            else
+                state.importControls.status.Text = sprintf('%s\nMissing variables: %s', depText, strjoin(missingDeps, ', '));
+            end
+        end
+    end
+
+    function missing = findMissingDependencies(depList)
+        missing = {};
+        if isempty(depList)
+            return;
+        end
+        for idxLocal = 1:numel(depList)
+            name = depList{idxLocal};
+            if ~evalin('base', sprintf('exist(''%s'',''var'')', name))
+                missing{end+1} = name; %#ok<AGROW>
+            end
+        end
+    end
+
+    function onImportOpen(~, ~)
+        if ~isfield(state.importControls, 'table') || ~isvalid(state.importControls.table)
+            return;
+        end
+        tbl = state.importControls.table;
+        if isempty(tbl.Selection)
+            return;
+        end
+        row = tbl.Selection(1);
+        if row < 1 || row > numel(state.importControls.entries)
+            return;
+        end
+        entry = state.importControls.entries(row);
+        pmFig = loadFigureSpec(entry.matPath);
+        if isempty(pmFig)
+            setStatus('Could not load the selected figure.', true);
+            return;
+        end
+        applyFigureSpec(pmFig);
+        setStatus('Figure imported.', false);
+    end
+
+    function pmFig = loadFigureSpec(matPath)
+        pmFig = [];
+        try
+            s = load(matPath, 'pmFigStruct');
+            if isfield(s, 'pmFigStruct')
+                pmFig = s.pmFigStruct;
+            elseif isfield(s, 'pmFig')
+                pmFig = s.pmFig;
+            end
+        catch ME
+            setStatus(sprintf('Failed to read %s: %s', matPath, ME.message), true);
+        end
+    end
+
+    function onImportDelete(~, ~)
+        if ~isfield(state.importControls, 'table') || ~isvalid(state.importControls.table)
+            return;
+        end
+        tbl = state.importControls.table;
+        if isempty(tbl.Selection)
+            return;
+        end
+        row = tbl.Selection(1);
+        if row < 1 || row > numel(state.importControls.entries)
+            return;
+        end
+        entry = state.importControls.entries(row);
+        choice = questdlg(sprintf('Delete %s?', entry.displayName), 'Confirm delete', 'Delete', 'Cancel', 'Cancel');
+        if ~strcmp(choice, 'Delete')
+            return;
+        end
+        safeDeleteFile(entry.matPath);
+        safeDeleteFile(entry.pngPath);
+        refreshImportList();
+    end
+
+    function onImportClearAll(~, ~)
+        choice = questdlg('Delete ALL saved PlotMenu figures?', 'Confirm delete all', 'Delete all', 'Cancel', 'Cancel');
+        if ~strcmp(choice, 'Delete all')
+            return;
+        end
+        entries = listSavedFigures();
+        for idxLocal = 1:numel(entries)
+            safeDeleteFile(entries(idxLocal).matPath);
+            safeDeleteFile(entries(idxLocal).pngPath);
+        end
+        refreshImportList();
+    end
+
+    function applyFigureSpec(pmFig)
+        if ~isstruct(pmFig)
+            setStatus('Invalid PlotMenu figure file.', true);
+            return;
+        end
+        rows = 1; cols = 1;
+        if isfield(pmFig, 'layout') && isstruct(pmFig.layout)
+            if isfield(pmFig.layout, 'rows'), rows = max(1, pmFig.layout.rows); end
+            if isfield(pmFig.layout, 'cols'), cols = max(1, pmFig.layout.cols); end
+        end
+        applySubplotGrid(rows, cols);
+
+        for spIdx = 1:min(numel(state.subplots), numel(pmFig.axes))
+            axSpec = pmFig.axes(spIdx);
+            subplotInfo = ensureSubplotStruct(state.subplots(spIdx));
+            subplotInfo.titleText = getFieldOrDefault(axSpec, 'title', '');
+            subplotInfo.xLabelText = getFieldOrDefault(axSpec, 'xLabel', '');
+            subplotInfo.yLabelText = getFieldOrDefault(axSpec, 'yLabel', '');
+            subplotInfo.xScale = getFieldOrDefault(axSpec, 'xScale', 'linear');
+            subplotInfo.yScale = getFieldOrDefault(axSpec, 'yScale', 'linear');
+            subplotInfo.legendVisible = getFieldOrDefault(axSpec, 'legendVisible', true);
+            subplotInfo.legendLocation = getFieldOrDefault(axSpec, 'legendLocation', 'best');
+            subplotInfo.xTickSpacing = getFieldOrDefault(axSpec, 'xTickSpacing', []);
+            subplotInfo.yTickSpacing = getFieldOrDefault(axSpec, 'yTickSpacing', []);
+            subplotInfo.axisEqual = getFieldOrDefault(axSpec, 'axisEqual', false);
+            subplotInfo.xLim = getFieldOrDefault(axSpec, 'xLim', []);
+            subplotInfo.yLim = getFieldOrDefault(axSpec, 'yLim', []);
+            subplotInfo.superpose = getFieldOrDefault(axSpec, 'superpose', false);
+
+            if isValidAxesHandle(subplotInfo.axes)
+                cla(subplotInfo.axes);
+                title(subplotInfo.axes, subplotInfo.titleText);
+                xlabel(subplotInfo.axes, subplotInfo.xLabelText);
+                ylabel(subplotInfo.axes, subplotInfo.yLabelText);
+            end
+
+            subplotInfo.lines = struct('handle', {}, 'xName', {}, 'yName', {}, 'legend', {}, 'datatips', {}, ...
+                'xData', {}, 'yData', {}, 'gain', {}, 'offset', {}, 'color', {}, 'lineStyle', {}, 'lineWidth', {}, ...
+                'displayName', {}, 'ySize', {}, 'sampleDim', {}, 'seriesIndices', {}, 'disconnected', {});
+
+            if isfield(axSpec, 'lines')
+                for ln = 1:numel(axSpec.lines)
+                    lnSpec = axSpec.lines(ln);
+                    [lineInfo, hLine] = renderLineFromSpec(subplotInfo.axes, lnSpec);
+                    subplotInfo.lines(end+1) = lineInfo; %#ok<AGROW>
+                    wireLineInteractivity(hLine);
+                end
+            end
+
+            state.subplots(spIdx) = subplotInfo;
+            applyAxesConfig(spIdx);
+            applyAxesTextFromState(spIdx);
+        end
+
+        state.activeSubplot = 1;
+        setActiveSubplot(1);
+        refreshLineListFromSubplot([]);
+    end
+
+    function [lineInfo, hLine] = renderLineFromSpec(axHandle, lnSpec)
+        hLine = []; %#ok<NASGU>
+        lineInfo = struct('handle', [], 'xName', lnSpec.xExpr, 'yName', lnSpec.yExpr, 'legend', true, 'datatips', [], ...
+            'xData', [], 'yData', [], 'gain', getFieldOrDefault(lnSpec, 'gain', 1), 'offset', getFieldOrDefault(lnSpec, 'offset', 0), ...
+            'color', [], 'lineStyle', '-', 'lineWidth', 1.5, 'displayName', getFieldOrDefault(lnSpec, 'displayName', lnSpec.yExpr), ...
+            'ySize', getFieldOrDefault(lnSpec, 'ySize', []), 'sampleDim', getFieldOrDefault(lnSpec, 'sampleDim', []), ...
+            'seriesIndices', getFieldOrDefault(lnSpec, 'seriesIndices', []), 'disconnected', false);
+
+        if isempty(axHandle) || ~isValidAxesHandle(axHandle)
+            return;
+        end
+
+        style = getFieldOrDefault(lnSpec, 'style', struct());
+        color = getFieldOrDefault(style, 'color', [0 0.4470 0.7410]);
+        lw = getFieldOrDefault(style, 'lineWidth', 1.5);
+        ls = getFieldOrDefault(style, 'lineStyle', '-');
+
+        [xData, yData, disconnected, missingVars] = evaluateLineExpressions(lnSpec);
+        if disconnected
+            lineInfo.disconnected = true;
+            if isfield(lnSpec, 'snapshot') && isfield(lnSpec.snapshot, 'x')
+                xData = lnSpec.snapshot.x;
+                yData = lnSpec.snapshot.y;
+            end
+            if isempty(xData) || isempty(yData)
+                xData = 0:1;
+                yData = zeros(size(xData));
+            end
+            if ~isempty(missingVars)
+                setStatus(sprintf('Missing variables: %s', strjoin(missingVars, ', ')), true);
+            else
+                setStatus('Could not evaluate expressions; showing snapshot.', true);
+            end
+        end
+
+        try
+            hLine = plot(axHandle, xData, yData, 'LineStyle', ls, 'LineWidth', lw, 'Color', color, ...
+                'DisplayName', lineInfo.displayName);
+        catch
+            hLine = plot(axHandle, xData, yData);
+        end
+        legendFlag = getFieldOrDefault(lnSpec, 'legend', true);
+        if ~legendFlag
+            set(hLine.Annotation.LegendInformation, 'IconDisplayStyle', 'off');
+        end
+        lineInfo.handle = hLine;
+        lineInfo.xData = xData;
+        lineInfo.yData = yData;
+        lineInfo.color = color;
+        lineInfo.lineWidth = lw;
+        lineInfo.lineStyle = ls;
+    end
+
+    function [xData, yData, disconnected, missingVars] = evaluateLineExpressions(lnSpec)
+        disconnected = false;
+        missingVars = {};
+        xData = [];
+        yData = [];
+        xExpr = getFieldOrDefault(lnSpec, 'xExpr', '');
+        yExpr = getFieldOrDefault(lnSpec, 'yExpr', '');
+        try
+            xVal = evalin('base', xExpr);
+        catch
+            xVal = [];
+        end
+        try
+            yVal = evalin('base', yExpr);
+        catch
+            yVal = [];
+        end
+
+        if isempty(xVal) || isempty(yVal)
+            disconnected = true;
+            missingVars = inferMissingVars({xExpr, yExpr});
+            return;
+        end
+
+        try
+            xData = xVal(:);
+            [sampleDim, isCompat] = findSampleDim(size(yVal), numel(xData));
+            if ~isCompat
+                disconnected = true;
+                missingVars = inferMissingVars({xExpr, yExpr});
+                return;
+            end
+            yValOriented = orientSamplesFirst(yVal, sampleDim);
+            ySeries = yValOriented(:, 1);
+            if isfield(lnSpec, 'seriesIndices') && ~isempty(lnSpec.seriesIndices)
+                idx = lnSpec.seriesIndices;
+                ySeries = yValOriented(:, idx);
+            end
+            yData = ySeries(:);
+        catch
+            disconnected = true;
+            missingVars = inferMissingVars({xExpr, yExpr});
+            return;
+        end
+    end
+
+    function missing = inferMissingVars(exprs)
+        deps = inferDependencies(exprs);
+        missing = deps(~cellfun(@(n) evalin('base', sprintf('exist(''%s'',''var'')', n)), deps));
+    end
+
+    function val = getFieldOrDefault(s, fieldName, defaultVal)
+        val = defaultVal;
+        if isstruct(s) && isfield(s, fieldName)
+            val = s.(fieldName);
+            if isempty(val)
+                val = defaultVal;
+            end
+        end
+    end
+
+    function onCloseRequested(src, ~)
+        stopAutosaveTimer();
+        if isgraphics(src)
+            delete(src);
+        end
     end
 
     function applyPanelStyle(panels, bgColor)
