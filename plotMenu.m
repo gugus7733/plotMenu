@@ -1943,7 +1943,12 @@ fig.CloseRequestFcn = @onCloseRequested;
                     lineInfo.xData = getFieldOrDefault(lnSpec.snapshot, 'x', []);
                     lineInfo.yData = getFieldOrDefault(lnSpec.snapshot, 'y', []);
                 end
-                subplotInfo.lines(end+1) = ensureLineDefaults(lineInfo); %#ok<AGROW>
+
+                if (numel(subplotInfo.lines) == 0)
+                    subplotInfo.lines = ensureLineDefaults(lineInfo); %#ok<AGROW>
+                else
+                    subplotInfo.lines(end+1) = ensureLineDefaults(lineInfo); %#ok<AGROW>
+                end
             end
         end
     end
@@ -2055,8 +2060,7 @@ fig.CloseRequestFcn = @onCloseRequested;
         if ~state.autosaveEnabled
             return;
         end
-%         periodSec = max(1, state.autosaveIntervalMinutes) * 60;
-        periodSec = 3;
+        periodSec = max(1, state.autosaveIntervalMinutes) * 60;
         syncAutosaveIndexFromDisk();
         state.autosaveTimer = timer('ExecutionMode', 'fixedRate', ...
             'StartDelay', periodSec, ...
@@ -2111,7 +2115,16 @@ fig.CloseRequestFcn = @onCloseRequested;
             drawnow limitrate;
             pmFig = buildFigureSpec(true, autosaveIdx);
             baseName = sprintf('autosave_%d', autosaveIdx);
-            saveFigureToDirectory(pmFig, state.storageDir, baseName);
+            [~, pngPath] = saveFigureToDirectory(pmFig, state.storageDir, baseName);
+            if ~isempty(pngPath) && ~exist(pngPath, 'file')
+                try
+                    saveFigurePreview(pngPath, pmFig);
+                catch
+                end
+                if strcmp(reason, 'manual') && ~exist(pngPath, 'file')
+                    setStatus('Autosave preview could not be generated.', true);
+                end
+            end
             trimAutosaveEntries();
             state.autosaveNextIndex = mod(autosaveIdx, state.autosaveRotation) + 1;
             if strcmp(reason, 'manual')
@@ -5462,7 +5475,11 @@ fig.CloseRequestFcn = @onCloseRequested;
                 
                 set(hLine.Annotation.LegendInformation, 'IconDisplayStyle', 'on');
                 
-                subplotInfo.lines(end+1) = lineInfo; %#ok<AGROW>
+                if (numel(subplotInfo.lines) == 0)
+                    subplotInfo.lines = lineInfo;
+                else
+                    subplotInfo.lines(end+1) = lineInfo;
+                end
                 
                 anyPlotted        = true;
                 newLineHandles{end+1} = hLine; %#ok<AGROW>
