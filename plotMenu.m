@@ -18,62 +18,8 @@ if ~isempty(existingMenus)
     delete(existingMenus);
 end
 
-% Shared state across nested callbacks
-state          = struct();
-statusTimer    = [];
-state.subplots = struct('axes',{},'lines',{},'superpose',{},'legendVisible',{},'legendLocation',{}, ...
-    'axisEqual',{},'xTickSpacing',{},'yTickSpacing',{},'xScale',{},'yScale',{},'limitListeners',{}, ...
-    'titleText',{},'xLabelText',{},'yLabelText',{},'xLim',{},'yLim',{});
-state.subplotRows = 1;
-state.subplotCols = 1;
-state.activeSubplot = 1;
-state.workspaceMeta = struct('name',{},'class',{},'size',{},'isSupportedArray',{},'numel',{},'isIntegerScalar',{},'kind',{},'scalarValue',{},'isNumeric',{},'isValidXCandidate',{});
-state.customYItems  = struct('label',{},'expression',{},'dimSizes',{});
-state.datatipMode   = false;
-state.derivedMode   = false;
-state.derivedChoices = struct('label',{},'expression',{});
-state.originalYBackground = [];
-state.hoverButtons = gobjects(0);
-state.selectedIndexVars = {};
-state.customIndexExpressions = {};
-maximizeTimer = [];
-
-% Light theme (default MATLAB-like)
-themeLight.bgMain        = [0.94 0.94 0.94];
-themeLight.bgPanel       = [0.97 0.97 0.97];
-themeLight.bgControl     = [1.00 1.00 1.00];
-themeLight.bgControlAlt  = [0.93 0.93 0.93];
-themeLight.fgText        = [0.00 0.00 0.00];
-themeLight.fgMuted       = [0.20 0.20 0.20];
-themeLight.accent        = [0.00 0.45 0.74];
-themeLight.accentWarning = [0.85 0.33 0.10];
-
-% Dark theme configuration
-themeDark.bgMain        = [0.10 0.10 0.12];
-themeDark.bgPanel       = [0.14 0.14 0.17];
-themeDark.bgControl     = [0.20 0.20 0.20];
-themeDark.bgControlAlt  = [0.25 0.25 0.29];
-themeDark.fgText        = [0.90 0.90 0.92];
-themeDark.fgMuted       = [0.70 0.70 0.75];
-themeDark.accent        = [0.30 0.70 1.00];
-themeDark.accentWarning = [0.95 0.55 0.35];
-
-% Font profiles
-fontUiLight.fontName      = 'Segoe UI';
-fontUiLight.fontSizeSmall  = 13;
-fontUiLight.fontSizeBase   = 14;
-fontUiLight.fontSizeLarge  = 15;
-
-fontUiDark.fontName       = 'Segoe UI';
-fontUiDark.fontSizeSmall  = 13;
-fontUiDark.fontSizeBase   = 14;
-fontUiDark.fontSizeLarge  = 15;
-
-fontFigure.fontName       = 'Segoe UI';
-fontFigure.fontSize       = 18;
-
-theme = themeDark;
-currentFont = fontUiDark;
+[state, statusTimer, maximizeTimer] = plotMenu_initState();
+[theme, currentFont, themeLight, themeDark, fontUiLight, fontUiDark, fontFigure] = plotMenu_themeConfig();
 
 %% Create main UI
 fig = uifigure( ...
