@@ -21,6 +21,27 @@ end
 [state, statusTimer, maximizeTimer] = plotMenu_initState();
 [theme, currentFont, themeLight, themeDark, fontUiLight, fontUiDark, fontFigure] = plotMenu_themeConfig();
 
+prefsDefaults = getDefaultPreferences();
+prefsLoaded = loadPreferencesFromDisk();
+prefsActive = mergePreferencesStruct(prefsDefaults, prefsLoaded);
+
+fontUiLight = overrideFontProfile(fontUiLight, prefsActive);
+fontUiDark  = overrideFontProfile(fontUiDark, prefsActive);
+fontFigure.fontName = prefsActive.figureFontName;
+fontFigure.fontSize = prefsActive.figureFontSize;
+
+if prefsActive.darkMode
+    theme = themeDark;
+    currentFont = fontUiDark;
+else
+    theme = themeLight;
+    currentFont = fontUiLight;
+end
+
+state.autosaveEnabled = prefsActive.autosaveEnabled;
+state.autosaveIntervalMinutes = prefsActive.autosaveIntervalMinutes;
+state.preferredStorageDir = prefsActive.storageDir;
+
 %% Create main UI
 fig = uifigure( ...
     'Name',     'PlotMenu', ...
@@ -613,8 +634,8 @@ refreshWorkspaceControls();
 state.storageDir              = '';
 state.storageDirIsTemporary   = false;
 state.autosaveTimer           = [];
-state.autosaveIntervalMinutes = 5;
-state.autosaveEnabled         = true;
+state.autosaveIntervalMinutes = prefsActive.autosaveIntervalMinutes;
+state.autosaveEnabled         = prefsActive.autosaveEnabled;
 state.autosaveRotation        = 3;
 state.importDialog            = [];
 state.importControls          = struct();
@@ -668,6 +689,8 @@ fig.CloseRequestFcn = @onCloseRequested;
         if isgraphics(appStateLocal.hFig)
             set(appStateLocal.hFig, 'Color', th.bgMain);
         end
+
+        applyUiStyle(appStateLocal.hFig, fontUi);
         
         for pnl = appStateLocal.allPanels(:)'
             if ~isgraphics(pnl)
@@ -916,6 +939,37 @@ fig.CloseRequestFcn = @onCloseRequested;
         updateStylesScrollContainerSize();
     end
 
+    function applyUiStyle(rootHandle, fontProfile)
+        if nargin < 1 || ~isgraphics(rootHandle)
+            return;
+        end
+        if nargin < 2 || ~isstruct(fontProfile)
+            return;
+        end
+
+        uiElements = findall(rootHandle, '-property', 'FontName');
+        for idxLocal = 1:numel(uiElements)
+            ctrl = uiElements(idxLocal);
+            if isa(ctrl, 'matlab.graphics.axis.Axes')
+                continue;
+            end
+            try
+                if isprop(ctrl, 'FontName')
+                    ctrl.FontName = fontProfile.fontName;
+                end
+                if isprop(ctrl, 'FontSize')
+                    if isa(ctrl, 'matlab.ui.control.Label')
+                        ctrl.FontSize = fontProfile.fontSizeSmall;
+                    else
+                        ctrl.FontSize = fontProfile.fontSizeBase;
+                    end
+                end
+            catch
+                % If a control rejects the style update, skip it quietly to avoid UI disruption
+            end
+        end
+    end
+
     function onPreferencesClicked(~, ~)
         openPreferencesDialog();
     end
@@ -931,7 +985,7 @@ fig.CloseRequestFcn = @onCloseRequested;
         
         % Create new Preferences dialog
         prefDlg = uifigure('Name', 'Preferences', ...
-            'Position', [300 300 520 360], ...
+            'Position', [300 300 560 380], ...
             'Color', theme.bgMain, ...
             'Resize', 'off');
         prefDlg.WindowStyle = 'modal';
@@ -940,8 +994,8 @@ fig.CloseRequestFcn = @onCloseRequested;
         end
         
         % Main layout
-        prefLayout = uigridlayout(prefDlg, [9 2]);
-        prefLayout.RowHeight = {'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit'};
+        prefLayout = uigridlayout(prefDlg, [10 2]);
+        prefLayout.RowHeight = {'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit'};
         prefLayout.ColumnWidth = {150, '1x'};
         prefLayout.BackgroundColor = theme.bgPanel;
         
@@ -1015,16 +1069,25 @@ fig.CloseRequestFcn = @onCloseRequested;
         if isempty(storageDir)
             storageDir = '(not set)';
         end
-        edtStorageDir = uieditfield(prefLayout, 'text', ...
+        storageRow = uigridlayout(prefLayout, [1 2]);
+        storageRow.ColumnWidth = {'1x', 'fit'};
+        storageRow.ColumnSpacing = 8;
+        storageRow.Padding = [0 0 0 0];
+        storageRow.BackgroundColor = theme.bgPanel;
+        storageRow.Layout.Row = 6;
+        storageRow.Layout.Column = 2;
+
+        edtStorageDir = uieditfield(storageRow, 'text', ...
             'Value', storageDir, ...
             'Editable', 'off');
-        edtStorageDir.Layout.Row = 6;
-        edtStorageDir.Layout.Column = 2;
+        edtStorageDir.Layout.Row = 1;
+        edtStorageDir.Layout.Column = 1;
 
-        btnPickStorage = uibutton(prefDlg, ...
+        btnPickStorage = uibutton(storageRow, ...
             'Text', 'Choose...', ...
             'ButtonPushedFcn', @onPrefPickStorage);
-        btnPickStorage.Position = [prefDlg.Position(3) - 110, prefDlg.Position(4) - 185, 90, 24];
+        btnPickStorage.Layout.Row = 1;
+        btnPickStorage.Layout.Column = 2;
 
         % Autosave settings
         lblAutosavePref = uilabel(prefLayout, 'Text', 'Enable autosave:');
@@ -1050,18 +1113,39 @@ fig.CloseRequestFcn = @onCloseRequested;
         edtAutosaveInterval.Layout.Row = 8;
         edtAutosaveInterval.Layout.Column = 2;
 
+        actionRow = uigridlayout(prefLayout, [1 3]);
+        actionRow.ColumnWidth = {'1x', 'fit', 'fit'};
+        actionRow.ColumnSpacing = 10;
+        actionRow.Padding = [0 0 0 0];
+        actionRow.BackgroundColor = theme.bgPanel;
+        actionRow.Layout.Row = 9;
+        actionRow.Layout.Column = [1 2];
+
+        btnPrefSave = uibutton(actionRow, ...
+            'Text', 'Save', ...
+            'ButtonPushedFcn', @onPrefSave);
+        btnPrefSave.Layout.Row = 1;
+        btnPrefSave.Layout.Column = 2;
+
+        btnPrefDefault = uibutton(actionRow, ...
+            'Text', 'Default', ...
+            'ButtonPushedFcn', @onPrefDefault);
+        btnPrefDefault.Layout.Row = 1;
+        btnPrefDefault.Layout.Column = 3;
+
         % Close Button
         btnPrefClose = uibutton(prefLayout, ...
             'Text', 'Close', ...
             'ButtonPushedFcn', @(~, ~) close(prefDlg));
-        btnPrefClose.Layout.Row = 9;
+        btnPrefClose.Layout.Row = 10;
         btnPrefClose.Layout.Column = [1 2];
         
         % Apply theme to dialog controls
         applyLabelStyle([lblDarkMode, lblFontFamily, lblFontSizeSmall, lblFontSizeBase, lblFontSizeLarge, lblStoragePref, lblAutosavePref, lblAutosaveInterval], theme.bgPanel);
         applyCheckboxStyle([chkPrefDarkMode, chkPrefAutosave], theme.bgPanel);
         applyControlStyle([ddPrefFontFamily, edtPrefFontSizeSmall, edtPrefFontSizeBase, edtPrefFontSizeLarge, edtStorageDir, edtAutosaveInterval], theme.bgControl);
-        applyButtonStyle([btnPrefClose, btnPickStorage]);
+        applyButtonStyle([btnPrefClose, btnPickStorage, btnPrefSave, btnPrefDefault]);
+        applyUiStyle(prefDlg, currentFont);
         
         % Store dialog handles
         appStateLocal.prefDialog = prefDlg;
@@ -1074,6 +1158,10 @@ fig.CloseRequestFcn = @onCloseRequested;
         appStateLocal.prefControls.chkPrefAutosave = chkPrefAutosave;
         appStateLocal.prefControls.edtAutosaveInterval = edtAutosaveInterval;
         appStateLocal.prefControls.btnPickStorage = btnPickStorage;
+        appStateLocal.prefControls.btnPrefSave = btnPrefSave;
+        appStateLocal.prefControls.btnPrefDefault = btnPrefDefault;
+        appStateLocal.prefControls.actionRow = actionRow;
+        appStateLocal.prefControls.storageRow = storageRow;
         guidata(fig, appStateLocal);
         
         % Nested callbacks for Preferences dialog
@@ -1112,7 +1200,7 @@ fig.CloseRequestFcn = @onCloseRequested;
                 applyLabelStyle([lblDarkMode, lblFontFamily, lblFontSizeSmall, lblFontSizeBase, lblFontSizeLarge, lblStoragePref, lblAutosavePref, lblAutosaveInterval], theme.bgPanel);
                 applyCheckboxStyle([chkPrefDarkMode, chkPrefAutosave], theme.bgPanel);
                 applyControlStyle([ddPrefFontFamily, edtPrefFontSizeSmall, edtPrefFontSizeBase, edtPrefFontSizeLarge, edtStorageDir, edtAutosaveInterval], theme.bgControl);
-                applyButtonStyle([btnPrefClose, btnPickStorage]);
+                applyButtonStyle([btnPrefClose, btnPickStorage, btnPrefSave, btnPrefDefault]);
             end
         end
         
@@ -1153,6 +1241,57 @@ fig.CloseRequestFcn = @onCloseRequested;
             state.autosaveIntervalMinutes = max(1, src.Value);
             setpref('PlotMenu', 'autosaveIntervalMinutes', state.autosaveIntervalMinutes);
             restartAutosaveTimer();
+        end
+
+        function onPrefSave(~, ~)
+            prefsToSave = getActivePreferences();
+            savePreferencesToDisk(prefsToSave);
+            setStatus('Preferences saved.', false);
+        end
+
+        function onPrefDefault(~, ~)
+            applyPreferencesStruct(getDefaultPreferences(), true);
+            refreshPreferenceControls();
+            setStatus('Preferences reset to defaults.', false);
+        end
+
+        function refreshPreferenceControls()
+            prefsSnapshot = getActivePreferences();
+
+            if isvalid(chkPrefDarkMode)
+                chkPrefDarkMode.Value = prefsSnapshot.darkMode;
+            end
+
+            if isvalid(ddPrefFontFamily)
+                if ~any(strcmp(ddPrefFontFamily.Items, prefsSnapshot.uiFontName))
+                    ddPrefFontFamily.Items{end+1} = prefsSnapshot.uiFontName; %#ok<AGROW>
+                end
+                ddPrefFontFamily.Value = prefsSnapshot.uiFontName;
+            end
+            if isvalid(edtPrefFontSizeSmall)
+                edtPrefFontSizeSmall.Value = prefsSnapshot.uiFontSizeSmall;
+            end
+            if isvalid(edtPrefFontSizeBase)
+                edtPrefFontSizeBase.Value = prefsSnapshot.uiFontSizeBase;
+            end
+            if isvalid(edtPrefFontSizeLarge)
+                edtPrefFontSizeLarge.Value = prefsSnapshot.uiFontSizeLarge;
+            end
+
+            if isvalid(edtStorageDir)
+                if isempty(prefsSnapshot.storageDir)
+                    edtStorageDir.Value = '(not set)';
+                else
+                    edtStorageDir.Value = prefsSnapshot.storageDir;
+                end
+            end
+
+            if isvalid(chkPrefAutosave)
+                chkPrefAutosave.Value = prefsSnapshot.autosaveEnabled;
+            end
+            if isvalid(edtAutosaveInterval)
+                edtAutosaveInterval.Value = prefsSnapshot.autosaveIntervalMinutes;
+            end
         end
     end
 
@@ -1210,9 +1349,183 @@ fig.CloseRequestFcn = @onCloseRequested;
         start(statusTimer);
     end
 
+    function prefs = getDefaultPreferences()
+        prefs.version = 1;
+        prefs.darkMode = true;
+        prefs.uiFontName = 'Segoe UI';
+        prefs.uiFontSizeSmall = 13;
+        prefs.uiFontSizeBase = 14;
+        prefs.uiFontSizeLarge = 15;
+        prefs.figureFontName = 'Segoe UI';
+        prefs.figureFontSize = 18;
+        prefs.autosaveEnabled = true;
+        prefs.autosaveIntervalMinutes = 5;
+        prefs.storageDir = '';
+    end
+
+    function prefs = mergePreferencesStruct(defaults, incoming)
+        prefs = defaults;
+        if nargin < 2 || ~isstruct(incoming)
+            return;
+        end
+        names = fieldnames(defaults);
+        for idxLocal = 1:numel(names)
+            if isfield(incoming, names{idxLocal}) && ~isempty(incoming.(names{idxLocal}))
+                prefs.(names{idxLocal}) = incoming.(names{idxLocal});
+            end
+        end
+    end
+
+    function filePath = getPreferencesFilePath()
+        candidateDirs = {fullfile(prefdir, 'plotmenu', 'preferences'), ...
+            fullfile(getUserPathBase(), 'plotmenu', 'preferences'), ...
+            fullfile(tempdir, 'plotmenu', 'preferences')};
+        prefsDir = '';
+        lastMsg = '';
+        for idxLocal = 1:numel(candidateDirs)
+            candidate = candidateDirs{idxLocal};
+            if isempty(candidate)
+                continue;
+            end
+            [ok, usableDir, msg] = ensureWritableDir(candidate);
+            if ok
+                prefsDir = usableDir;
+                break;
+            end
+            lastMsg = msg;
+        end
+
+        if isempty(prefsDir)
+            prefsDir = fullfile(tempdir, 'plotmenu', 'preferences');
+            if ~exist(prefsDir, 'dir')
+                mkdir(prefsDir);
+            end
+            if ~isempty(lastMsg)
+                warning('PlotMenu:PrefsFallback', 'Falling back to %s for preferences: %s', prefsDir, lastMsg);
+            end
+        end
+
+        filePath = fullfile(prefsDir, 'plotmenu_prefs.mat');
+    end
+
+    function prefs = loadPreferencesFromDisk()
+        defaults = getDefaultPreferences();
+        prefs = defaults;
+        prefsFile = getPreferencesFilePath();
+        if exist(prefsFile, 'file')
+            try
+                fileData = load(prefsFile, 'prefs');
+                if isfield(fileData, 'prefs') && isstruct(fileData.prefs)
+                    prefs = mergePreferencesStruct(defaults, fileData.prefs);
+                end
+            catch ME
+                warning('PlotMenu:PrefsLoad', 'Failed to load preferences: %s', ME.message);
+                prefs = defaults;
+            end
+        end
+    end
+
+    function savePreferencesToDisk(prefs)
+        defaults = getDefaultPreferences();
+        prefs = mergePreferencesStruct(defaults, prefs);
+        prefs.version = defaults.version;
+        prefsFile = getPreferencesFilePath();
+        prefsStruct = prefs; %#ok<NASGU>
+        try
+            save(prefsFile, 'prefs', 'prefsStruct');
+        catch ME
+            warning('PlotMenu:PrefsSave', 'Failed to save preferences: %s', ME.message);
+        end
+    end
+
+    function fontProfile = overrideFontProfile(fontProfile, prefs)
+        if isfield(prefs, 'uiFontName') && ~isempty(prefs.uiFontName)
+            fontProfile.fontName = prefs.uiFontName;
+        end
+        if isfield(prefs, 'uiFontSizeSmall') && ~isempty(prefs.uiFontSizeSmall)
+            fontProfile.fontSizeSmall = prefs.uiFontSizeSmall;
+        end
+        if isfield(prefs, 'uiFontSizeBase') && ~isempty(prefs.uiFontSizeBase)
+            fontProfile.fontSizeBase = prefs.uiFontSizeBase;
+        end
+        if isfield(prefs, 'uiFontSizeLarge') && ~isempty(prefs.uiFontSizeLarge)
+            fontProfile.fontSizeLarge = prefs.uiFontSizeLarge;
+        end
+    end
+
+    function prefs = getActivePreferences()
+        appStateLocal = guidata(fig);
+        prefs = getDefaultPreferences();
+        prefs.darkMode = isequal(appStateLocal.currentTheme, appStateLocal.themeDark);
+        uiFont = getCurrentUiFontProfile();
+        prefs.uiFontName = uiFont.fontName;
+        prefs.uiFontSizeSmall = uiFont.fontSizeSmall;
+        prefs.uiFontSizeBase = uiFont.fontSizeBase;
+        prefs.uiFontSizeLarge = uiFont.fontSizeLarge;
+        prefs.figureFontName = appStateLocal.fontFigure.fontName;
+        prefs.figureFontSize = appStateLocal.fontFigure.fontSize;
+        prefs.autosaveEnabled = state.autosaveEnabled;
+        prefs.autosaveIntervalMinutes = state.autosaveIntervalMinutes;
+        prefs.storageDir = state.storageDir;
+    end
+
+    function applyPreferencesStruct(prefs, refreshPrefDialog)
+        if nargin < 2
+            refreshPrefDialog = false;
+        end
+        defaults = getDefaultPreferences();
+        prefs = mergePreferencesStruct(defaults, prefs);
+
+        appStateLocal = guidata(fig);
+        appStateLocal.fontUiLight = overrideFontProfile(appStateLocal.fontUiLight, prefs);
+        appStateLocal.fontUiDark = overrideFontProfile(appStateLocal.fontUiDark, prefs);
+        appStateLocal.fontFigure.fontName = prefs.figureFontName;
+        appStateLocal.fontFigure.fontSize = prefs.figureFontSize;
+
+        if prefs.darkMode
+            appStateLocal.currentTheme = appStateLocal.themeDark;
+            currentFont = appStateLocal.fontUiDark;
+        else
+            appStateLocal.currentTheme = appStateLocal.themeLight;
+            currentFont = appStateLocal.fontUiLight;
+        end
+        theme = appStateLocal.currentTheme;
+
+        guidata(fig, appStateLocal);
+
+        state.autosaveEnabled = prefs.autosaveEnabled;
+        state.autosaveIntervalMinutes = prefs.autosaveIntervalMinutes;
+        state.preferredStorageDir = prefs.storageDir;
+
+        if ~isempty(prefs.storageDir)
+            applyStoragePreference(prefs.storageDir);
+        else
+            initializeStoragePreferences(false);
+        end
+
+        applyTheme(appStateLocal);
+        restartAutosaveTimer();
+
+        if refreshPrefDialog && isfield(appStateLocal, 'prefDialog') && isvalid(appStateLocal.prefDialog)
+            if isfield(appStateLocal, 'prefControls') && isstruct(appStateLocal.prefControls)
+                try
+                    refreshPreferenceControls();
+                catch
+                    % If dialog controls have been destroyed, skip refresh
+                end
+            end
+        end
+    end
+
     %% Persistence: storage, save, import, autosave
-    function initializeStoragePreferences()
-        if ispref('PlotMenu', 'storageDir')
+    function initializeStoragePreferences(useStoredPref)
+        if nargin < 1
+            useStoredPref = true;
+        end
+
+        if isfield(state, 'preferredStorageDir') && ~isempty(state.preferredStorageDir)
+            customDir = state.preferredStorageDir;
+        elseif useStoredPref && ispref('PlotMenu', 'storageDir')
             customDir = getpref('PlotMenu', 'storageDir');
         else
             customDir = '';
