@@ -486,66 +486,65 @@ bottomPanel = uipanel(stylesLayout, 'BorderType', 'none', 'BackgroundColor', the
 bottomPanel.Layout.Row    = 3;
 bottomPanel.Layout.Column = 1;
 
-bottomLayout = uigridlayout(bottomPanel, [2 4]);
+bottomLayout = uigridlayout(bottomPanel, [2 2]);
 bottomLayout.RowHeight = {30, 30};
-bottomLayout.ColumnWidth = {160, 140, '1x', 40};
+bottomLayout.ColumnWidth = {'1x', 'fit'};
+bottomLayout.RowSpacing = 6;
+bottomLayout.ColumnSpacing = 12;
 
 rightPanel.SizeChangedFcn = @(~, ~) updateStylesScrollContainerSize();
 
+footerActionsLayout = uigridlayout(bottomLayout, [2 3]);
+footerActionsLayout.Layout.Row = [1 2];
+footerActionsLayout.Layout.Column = 1;
+footerActionsLayout.RowHeight = {30, 30};
+footerActionsLayout.ColumnWidth = {'1x', '1x', '1x'};
+footerActionsLayout.RowSpacing = 6;
+footerActionsLayout.ColumnSpacing = 8;
+footerActionsLayout.Padding = [0 0 0 0];
+
 % --- Preferences button + Export button ---
-btnQuickSave = uibutton(bottomLayout, ...
+btnQuickSave = uibutton(footerActionsLayout, ...
     'Text',          'Quick Save', ...
     'Tooltip',       'Save PlotMenu figure to the default folder', ...
     'ButtonPushedFcn', @onQuickSave);
 btnQuickSave.Layout.Row    = 1;
 btnQuickSave.Layout.Column = 1;
 
-btnSaveAs = uibutton(bottomLayout, ...
+btnSaveAs = uibutton(footerActionsLayout, ...
     'Text',          'Save As...', ...
     'Tooltip',       'Choose where to save the PlotMenu figure', ...
     'ButtonPushedFcn', @onSaveAs);
 btnSaveAs.Layout.Row    = 1;
 btnSaveAs.Layout.Column = 2;
 
-btnImportFigure = uibutton(bottomLayout, ...
+btnImportFigure = uibutton(footerActionsLayout, ...
     'Text',          'Import Figure', ...
     'Tooltip',       'Browse saved PlotMenu figures', ...
     'ButtonPushedFcn', @onOpenImportManager);
 btnImportFigure.Layout.Row    = 1;
 btnImportFigure.Layout.Column = 3;
 
-btnPreferences = uibutton(bottomLayout, ...
-    'Text', '⚙', ...
+btnRefreshFigures = uibutton(footerActionsLayout, ...
+    'Text', 'Refresh', ...
+    'Tooltip', 'Refresh autosave now', ...
+    'ButtonPushedFcn', @(~, ~) triggerAutosave('manual'));
+btnRefreshFigures.Layout.Row    = 2;
+btnRefreshFigures.Layout.Column = 1;
+
+btnPreferences = uibutton(footerActionsLayout, ...
+    'Text', 'Preferences', ...
     'Tooltip', 'Preferences', ...
     'ButtonPushedFcn', @onPreferencesClicked);
-btnPreferences.Layout.Row    = 1;
-btnPreferences.Layout.Column = 4;
+btnPreferences.Layout.Row    = 2;
+btnPreferences.Layout.Column = 2;
 
 btnExport = uibutton(bottomLayout, ...
     'Text',          'Export to MATLAB code', ...
     'ButtonPushedFcn', @onExport);
-btnExport.Layout.Row    = 2;
-btnExport.Layout.Column = 1;
-
-chkAutosave = uicheckbox(bottomLayout, ...
-    'Text', 'Autosave', ...
-    'ValueChangedFcn', @onAutosaveToggled);
-chkAutosave.Layout.Row    = 2;
-chkAutosave.Layout.Column = 2;
-
-lblStorageDir = uilabel(bottomLayout, ...
-    'Text', '', ...
-    'HorizontalAlignment', 'right', ...
-    'Tooltip', 'Current figure storage folder');
-lblStorageDir.Layout.Row    = 2;
-lblStorageDir.Layout.Column = 3;
-
-btnRefreshFigures = uibutton(bottomLayout, ...
-    'Text', '↻', ...
-    'Tooltip', 'Refresh autosave now', ...
-    'ButtonPushedFcn', @(~, ~) triggerAutosave('manual'));
-btnRefreshFigures.Layout.Row    = 2;
-btnRefreshFigures.Layout.Column = 4;
+btnExport.Layout.Row    = 1;
+btnExport.Layout.Column = 2;
+% btnExport.Layout.RowSpan = 2;
 
 % Status "toast" label (center bottom of the figure)
 lblStatus = uilabel(fig, ...
@@ -573,7 +572,7 @@ appState.axesScalePanel = axesScalePanel;
 appState.centerLayout   = centerLayout;
 appState.stylesLayout   = stylesLayout;
 appState.mainLayout     = mainLayout;
-appState.allLayouts     = [leftLayout, subplotLayout, derivedRow, actionsLayout, centerLayout, stylesLayout, bottomLayout, lineLayout, axesLayout];
+appState.allLayouts     = [leftLayout, subplotLayout, derivedRow, actionsLayout, centerLayout, stylesLayout, bottomLayout, footerActionsLayout, lineLayout, axesLayout];
 appState.altLayouts     = axesScaleLayout;
 appState.themeLight     = themeLight;
 appState.themeDark      = themeDark;
@@ -585,11 +584,11 @@ appState.prefDialog     = [];
 appState.prefControls   = struct();
 appState.allButtons = [btnRefresh, btnOtherData, btnIndexVars, btnDerivedNew, btnClear, btnPlot, btnLineOrderDown, btnLineOrderUp, ...
     btnPresetDeg2Rad, btnPresetRad2Deg, tbtnDatatipMode, btnRemoveLine, btnAutoXTicks, btnAutoYTicks, btnExport, btnPreferences, ...
-    btnQuickSave, btnSaveAs, btnImportFigure, chkAutosave, btnRefreshFigures];
-appState.allCheckboxes = [chkSubplotSuperpose, chkLineLegend, chkAxisEqual, chkLegend, chkAutosave];
+    btnQuickSave, btnSaveAs, btnImportFigure, btnRefreshFigures];
+appState.allCheckboxes = [chkSubplotSuperpose, chkLineLegend, chkAxisEqual, chkLegend];
 appState.allLabels = [lblLayoutSummary, lblXVar, lblYVar, lblLines, lblLineName, lblLineOrder, lblColor, lblWidth, ...
     lblStyle, lblTransform, lblGain, lblOffset, lblTitle, lblXLabel, lblYLabel, lblLegendLoc, lblAxesScaleHeader, lblXTickSpacing, ...
-    lblYTickSpacing, lblXScale, lblYScale, lblStorageDir];
+    lblYTickSpacing, lblXScale, lblYScale];
 appState.allEdits = [edtDerivedName, edtDerivedExpr, edtLineName, edtLineWidth, edtLineGain, edtLineOffset, ...
     edtXTickSpacing, edtYTickSpacing, edtTitle, edtXLabel, edtYLabel];
 appState.allLists = [ddLayoutMenu, ddXVar, lbYVar, lbLines, ddLineStyle, ddLegendLocation, ddXScale, ddYScale];
@@ -1150,7 +1149,6 @@ fig.CloseRequestFcn = @onCloseRequested;
         function onPrefAutosaveChanged(src, ~)
             state.autosaveEnabled = logical(src.Value);
             setpref('PlotMenu', 'autosaveEnabled', state.autosaveEnabled);
-            chkAutosave.Value = state.autosaveEnabled;
             restartAutosaveTimer();
         end
 
@@ -1229,7 +1227,6 @@ fig.CloseRequestFcn = @onCloseRequested;
         if ispref('PlotMenu', 'autosaveEnabled')
             state.autosaveEnabled = getpref('PlotMenu', 'autosaveEnabled');
         end
-        chkAutosave.Value = logical(state.autosaveEnabled);
 
         [resolvedDir, isTemp, warnMsg] = resolveStorageDir(customDir);
         state.storageDir = resolvedDir;
@@ -1238,8 +1235,6 @@ fig.CloseRequestFcn = @onCloseRequested;
         if ~isempty(resolvedDir)
             setpref('PlotMenu', 'storageDir', resolvedDir);
         end
-        updateStorageDirLabel();
-
         if ~isempty(warnMsg)
             setStatus(warnMsg, true);
         end
@@ -1256,22 +1251,12 @@ fig.CloseRequestFcn = @onCloseRequested;
         state.storageDirIsTemporary = isTemp;
         state.persistenceWarning = warnMsg;
         setpref('PlotMenu', 'storageDir', resolvedDir);
-        updateStorageDirLabel();
         restartAutosaveTimer();
         if ~isempty(warnMsg)
             setStatus(warnMsg, true);
         else
             setStatus(sprintf('Using %s to store PlotMenu figures.', resolvedDir), false);
         end
-    end
-
-    function updateStorageDirLabel()
-        folderText = state.storageDir;
-        if isempty(folderText)
-            folderText = '(no folder)';
-        end
-        lblStorageDir.Text = sprintf('Folder: %s', folderText);
-        lblStorageDir.Tooltip = folderText;
     end
 
     function [dirPath, isTemporary, warnMsg] = resolveStorageDir(customDir)
@@ -1551,6 +1536,9 @@ fig.CloseRequestFcn = @onCloseRequested;
         if nargin < 1 || isempty(pngPath)
             return;
         end
+        warnState = warning;
+        warnCleanup = onCleanup(@() warning(warnState)); %#ok<NASGU>
+        warning('off', 'all'); % Suppress UI component export warnings during preview capture
         try
             exportgraphics(centerPanel, pngPath, 'Resolution', 144);
         catch
@@ -1562,16 +1550,6 @@ fig.CloseRequestFcn = @onCloseRequested;
         end
     end
 
-    function onAutosaveToggled(src, ~)
-        state.autosaveEnabled = logical(src.Value);
-        setpref('PlotMenu', 'autosaveEnabled', state.autosaveEnabled);
-        if state.autosaveEnabled
-            restartAutosaveTimer();
-        else
-            stopAutosaveTimer();
-        end
-    end
-
     function startAutosaveTimer()
         stopAutosaveTimer();
         if ~state.autosaveEnabled
@@ -1579,6 +1557,7 @@ fig.CloseRequestFcn = @onCloseRequested;
         end
         periodSec = max(1, state.autosaveIntervalMinutes) * 60;
         state.autosaveTimer = timer('ExecutionMode', 'fixedSpacing', ...
+            'StartDelay', periodSec, ...
             'Period', periodSec, ...
             'TimerFcn', @(~, ~) triggerAutosave('timer'));
         try
