@@ -2067,11 +2067,15 @@ fig.CloseRequestFcn = @onCloseRequested;
         end
     end
 
-    function safeDeleteFile(pathToDelete)
+    function [success, errMsg] = safeDeleteFile(pathToDelete)
+        success = true;
+        errMsg = '';
         if exist(pathToDelete, 'file')
             try
                 delete(pathToDelete);
-            catch
+            catch ME
+                success = false;
+                errMsg = ME.message;
             end
         end
     end
@@ -2107,6 +2111,9 @@ fig.CloseRequestFcn = @onCloseRequested;
         tbl.Layout.Column = 1;
         tbl.ColumnWidth = {'1x'};
         tbl.ForegroundColor = [1 1 1];
+        if isprop(tbl, 'Multiselect')
+            tbl.Multiselect = 'on';
+        end
 
         previewPanel = uipanel(layout, 'Title', 'Preview', 'BackgroundColor', theme.bgPanel);
         previewPanel.Layout.Row = 1;
@@ -2270,6 +2277,18 @@ fig.CloseRequestFcn = @onCloseRequested;
         end
     end
 
+    function resetImportPreview()
+        if isfield(state.importControls, 'img') && isgraphics(state.importControls.img)
+            state.importControls.img.ImageSource = '';
+        end
+        if isfield(state.importControls, 'meta') && isgraphics(state.importControls.meta)
+            state.importControls.meta.Text = 'Select a saved figure to preview.';
+        end
+        if isfield(state.importControls, 'status') && isgraphics(state.importControls.status)
+            state.importControls.status.Text = '';
+        end
+    end
+
     function missing = findMissingDependencies(depList)
         missing = {};
         if isempty(depList)
@@ -2327,18 +2346,57 @@ fig.CloseRequestFcn = @onCloseRequested;
         if isempty(tbl.Selection)
             return;
         end
-        row = tbl.Selection(1);
-        if row < 1 || row > numel(state.importControls.entries)
+
+        selectionRows = unique(tbl.Selection(:, 1));
+        validMask = selectionRows >= 1 & selectionRows <= numel(state.importControls.entries);
+        selectionRows = selectionRows(validMask);
+        if isempty(selectionRows)
             return;
         end
-        entry = state.importControls.entries(row);
-        choice = questdlg(sprintf('Delete %s?', entry.displayName), 'Confirm delete', 'Delete', 'Cancel', 'Cancel');
-        if ~strcmp(choice, 'Delete')
-            return;
+
+        numSelected = numel(selectionRows);
+        if numSelected == 1
+            entry = state.importControls.entries(selectionRows);
+            choice = questdlg(sprintf('Delete %s?', entry.displayName), 'Confirm delete', 'Delete', 'Cancel', 'Cancel');
+            if ~strcmp(choice, 'Delete')
+                return;
+            end
+        else
+            msg = sprintf(['Delete %d selected figures? This will permanently remove the .plotmenu.mat and .png files.'], ...
+                numSelected);
+            choice = questdlg(msg, 'Confirm delete', 'Delete', 'Cancel', 'Cancel');
+            if ~strcmp(choice, 'Delete')
+                return;
+            end
         end
-        safeDeleteFile(entry.matPath);
-        safeDeleteFile(entry.pngPath);
+
+        failures = {};
+        for idxLocal = 1:numSelected
+            entry = state.importControls.entries(selectionRows(idxLocal));
+            [matOk, matErr] = safeDeleteFile(entry.matPath);
+            [pngOk, pngErr] = safeDeleteFile(entry.pngPath);
+            if ~(matOk && pngOk)
+                msgParts = {};
+                if ~matOk
+                    msgParts{end+1} = sprintf('MAT: %s', matErr); %#ok<AGROW>
+                end
+                if ~pngOk
+                    msgParts{end+1} = sprintf('PNG: %s', pngErr); %#ok<AGROW>
+                end
+                failures{end+1} = sprintf('%s (%s)', entry.displayName, strjoin(msgParts, '; ')); %#ok<AGROW>
+            end
+        end
+
         refreshImportList();
+        if isvalid(tbl)
+            tbl.Selection = [];
+        end
+        resetImportPreview();
+
+        if ~isempty(failures) && isgraphics(state.importDialog)
+            msg = sprintf('%d/%d figures could not be deleted:\n%s', numel(failures), numSelected, strjoin(failures, '\n'));
+            uialert(state.importDialog, msg, 'Delete issues');
+        end
     end
 
     function onImportClearAll(~, ~)
@@ -5298,6 +5356,7 @@ fig.CloseRequestFcn = @onCloseRequested;
                 lineInfo.lineStyle = hLine.LineStyle;
                 lineInfo.lineWidth = hLine.LineWidth;
                 lineInfo.displayName = hLine.DisplayName;
+                lineInfo.disconnected = 0;
                 
                 set(hLine.Annotation.LegendInformation, 'IconDisplayStyle', 'on');
                 
