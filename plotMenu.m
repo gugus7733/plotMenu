@@ -2081,12 +2081,17 @@ fig.CloseRequestFcn = @onCloseRequested;
                 'xData', {}, 'yData', {}, 'gain', {}, 'offset', {}, 'color', {}, 'lineStyle', {}, 'lineWidth', {}, ...
                 'displayName', {}, 'ySize', {}, 'sampleDim', {}, 'seriesIndices', {}, 'disconnected', {});
 
-            if isfield(axSpec, 'lines')
+            if isfield(axSpec, 'lines') && isValidAxesHandle(subplotInfo.axes)
+                holdWasOn = ishold(subplotInfo.axes);
+                hold(subplotInfo.axes, 'on');
                 for ln = 1:numel(axSpec.lines)
                     lnSpec = axSpec.lines(ln);
                     [lineInfo, hLine] = renderLineFromSpec(subplotInfo.axes, lnSpec);
                     subplotInfo.lines(end+1) = lineInfo; %#ok<AGROW>
                     wireLineInteractivity(hLine);
+                end
+                if ~holdWasOn
+                    hold(subplotInfo.axes, 'off');
                 end
             end
 
