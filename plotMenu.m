@@ -1252,9 +1252,26 @@ fig.CloseRequestFcn = @onCloseRequested;
         end
 
         function onPrefDefault(~, ~)
-            applyPreferencesStruct(getDefaultPreferences(), true);
-            refreshPreferenceControls();
-            setStatus('Preferences reset to defaults.', false);
+            choice = uiconfirm(prefDlg, 'Reset all preferences to their default values?', ...
+                'Reset Preferences', 'Options', {'Reset', 'Cancel'}, ...
+                'DefaultOption', 'Cancel', 'CancelOption', 'Cancel');
+            if ~strcmp(choice, 'Reset')
+                return;
+            end
+
+            [resetOk, resetErr] = resetPreferencesToDefaults();
+            if resetOk
+                refreshPreferenceControls();
+                setStatus('Preferences reset to defaults.', false);
+            else
+                if isempty(resetErr)
+                    resetErr = 'Failed to reset preferences to defaults.';
+                end
+                setStatus(resetErr, true);
+                if isvalid(prefDlg)
+                    uialert(prefDlg, resetErr, 'Reset failed');
+                end
+            end
         end
 
         function refreshPreferenceControls()
@@ -1427,16 +1444,37 @@ fig.CloseRequestFcn = @onCloseRequested;
         end
     end
 
-    function savePreferencesToDisk(prefs)
+    function [success, errMsg] = savePreferencesToDisk(prefs)
         defaults = getDefaultPreferences();
         prefs = mergePreferencesStruct(defaults, prefs);
         prefs.version = defaults.version;
         prefsFile = getPreferencesFilePath();
         prefsStruct = prefs; %#ok<NASGU>
+        success = false;
+        errMsg = '';
         try
             save(prefsFile, 'prefs', 'prefsStruct');
+            syncPreferencesToMatlabPref(prefs);
+            success = true;
         catch ME
+            errMsg = ME.message;
             warning('PlotMenu:PrefsSave', 'Failed to save preferences: %s', ME.message);
+        end
+    end
+
+    function syncPreferencesToMatlabPref(prefs)
+        try
+            setpref('PlotMenu', 'autosaveEnabled', prefs.autosaveEnabled);
+            setpref('PlotMenu', 'autosaveIntervalMinutes', prefs.autosaveIntervalMinutes);
+            if isempty(prefs.storageDir)
+                if ispref('PlotMenu', 'storageDir')
+                    rmpref('PlotMenu', 'storageDir');
+                end
+            else
+                setpref('PlotMenu', 'storageDir', prefs.storageDir);
+            end
+        catch ME
+            warning('PlotMenu:PrefsSync', 'Failed to synchronize MATLAB preferences: %s', ME.message);
         end
     end
 
@@ -1517,6 +1555,28 @@ fig.CloseRequestFcn = @onCloseRequested;
                 end
             end
         end
+    end
+
+    function [success, errMsg] = resetPreferencesToDefaults()
+        errMsg = '';
+        defaults = getDefaultPreferences();
+
+        try
+            applyPreferencesStruct(defaults, true);
+        catch ME
+            success = false;
+            errMsg = sprintf('Failed to apply default preferences: %s', ME.message);
+            return;
+        end
+
+        [success, saveErr] = savePreferencesToDisk(defaults);
+        if ~success
+            errMsg = sprintf('Failed to persist default preferences: %s', saveErr);
+            return;
+        end
+
+        initializeStoragePreferences(false);
+        restartAutosaveTimer();
     end
 
     %% Persistence: storage, save, import, autosave
