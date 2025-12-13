@@ -637,6 +637,8 @@ state.autosaveTimer           = [];
 state.autosaveIntervalMinutes = prefsActive.autosaveIntervalMinutes;
 state.autosaveEnabled         = prefsActive.autosaveEnabled;
 state.autosaveRotation        = 3;
+state.autosaveNextIndex       = 1;
+state.autosaveInProgress      = false;
 state.importDialog            = [];
 state.importControls          = struct();
 state.autosaveStatus          = '';
@@ -1542,6 +1544,7 @@ fig.CloseRequestFcn = @onCloseRequested;
         state.storageDir = resolvedDir;
         state.storageDirIsTemporary = isTemp;
         state.persistenceWarning = warnMsg;
+        syncAutosaveIndexFromDisk();
         if ~isempty(resolvedDir)
             setpref('PlotMenu', 'storageDir', resolvedDir);
         end
@@ -1561,6 +1564,7 @@ fig.CloseRequestFcn = @onCloseRequested;
         state.storageDirIsTemporary = isTemp;
         state.persistenceWarning = warnMsg;
         setpref('PlotMenu', 'storageDir', resolvedDir);
+        syncAutosaveIndexFromDisk();
         restartAutosaveTimer();
         if ~isempty(warnMsg)
             setStatus(warnMsg, true);
@@ -1829,21 +1833,24 @@ fig.CloseRequestFcn = @onCloseRequested;
             return;
         end
 
-        saveFigurePreview(pngPath);
+        saveFigurePreview(pngPath, pmFig);
     end
 
-    function saveFigurePreview(pngPath)
+    function saveFigurePreview(pngPath, pmFig)
         if nargin < 1 || isempty(pngPath)
             return;
+        end
+        if nargin < 2
+            pmFig = [];
         end
         warnState = warning;
         warnCleanup = onCleanup(@() warning(warnState)); %#ok<NASGU>
         warning('off', 'all'); % Suppress UI component export warnings during preview capture
         try
-            renderPreviewFromState(pngPath);
+            renderPreviewFromSpec(pngPath, pmFig);
         catch
             try
-                drawnow;
+                drawnow limitrate;
                 exportgraphics(centerPanel, pngPath, 'Resolution', 144);
             catch
                 try
@@ -1855,26 +1862,37 @@ fig.CloseRequestFcn = @onCloseRequested;
         end
     end
 
-    % Build previews directly from the stored subplot/line state so UI container
+    % Build previews directly from the saved figure specification so UI container
     % backgrounds (which render as blank white surfaces in some releases) no
     % longer leak into the saved PNG previews.
-    function renderPreviewFromState(pngPath)
-        rows = max(1, state.subplotRows);
-        cols = max(1, state.subplotCols);
+    function renderPreviewFromSpec(pngPath, pmFig)
+        if nargin < 2 || isempty(pmFig)
+            pmFig = buildFigureSpec(false, 0);
+        end
+
+        if ~isfield(pmFig, 'layout') || ~isfield(pmFig.layout, 'rows') || ~isfield(pmFig.layout, 'cols')
+            pmFig.layout = struct('rows', 1, 'cols', 1);
+        end
+        if ~isfield(pmFig, 'axes') || isempty(pmFig.axes)
+            pmFig.axes = struct([]);
+        end
+
+        rows = max(1, pmFig.layout.rows);
+        cols = max(1, pmFig.layout.cols);
         tmpFig = figure('Visible', 'off', 'Color', theme.bgMain, 'Position', [100 100 960 720]);
         cleanupObj = onCleanup(@() safeCloseFigure(tmpFig)); %#ok<NASGU>
 
         tl = tiledlayout(tmpFig, rows, cols, 'Padding', 'compact', 'TileSpacing', 'compact');
-        numTiles = max(numel(state.subplots), rows * cols);
+        numTiles = max(numel(pmFig.axes), rows * cols);
         for idxLocal = 1:numTiles
             nexttile(tl, idxLocal);
             axPreview = gca;
-            if idxLocal > numel(state.subplots)
+            if idxLocal > numel(pmFig.axes)
                 axis(axPreview, 'off');
                 continue;
             end
 
-            subplotInfo = ensureSubplotStruct(state.subplots(idxLocal));
+            subplotInfo = subplotInfoFromSpec(pmFig.axes(idxLocal));
             applyAxesTheme(axPreview, false);
             plotPreviewLines(axPreview, subplotInfo);
             applyPreviewAxesConfig(axPreview, subplotInfo);
@@ -1882,6 +1900,52 @@ fig.CloseRequestFcn = @onCloseRequested;
 
         drawnow;
         exportgraphics(tmpFig, pngPath, 'Resolution', 144);
+    end
+
+    function subplotInfo = subplotInfoFromSpec(axSpec)
+        subplotInfo = ensureSubplotStruct(struct());
+        subplotInfo.titleText      = getFieldOrDefault(axSpec, 'title', '');
+        subplotInfo.xLabelText     = getFieldOrDefault(axSpec, 'xLabel', '');
+        subplotInfo.yLabelText     = getFieldOrDefault(axSpec, 'yLabel', '');
+        subplotInfo.legendVisible  = getFieldOrDefault(axSpec, 'legendVisible', true);
+        subplotInfo.legendLocation = getFieldOrDefault(axSpec, 'legendLocation', 'best');
+        subplotInfo.xTickSpacing   = getFieldOrDefault(axSpec, 'xTickSpacing', []);
+        subplotInfo.yTickSpacing   = getFieldOrDefault(axSpec, 'yTickSpacing', []);
+        subplotInfo.axisEqual      = getFieldOrDefault(axSpec, 'axisEqual', false);
+        subplotInfo.xLim           = getFieldOrDefault(axSpec, 'xLim', []);
+        subplotInfo.yLim           = getFieldOrDefault(axSpec, 'yLim', []);
+        subplotInfo.xScale         = getFieldOrDefault(axSpec, 'xScale', 'linear');
+        subplotInfo.yScale         = getFieldOrDefault(axSpec, 'yScale', 'linear');
+        subplotInfo.superpose      = getFieldOrDefault(axSpec, 'superpose', false);
+
+        subplotInfo.lines = ensureLineDefaults(struct([]));
+        if isfield(axSpec, 'lines') && ~isempty(axSpec.lines)
+            for ln = 1:numel(axSpec.lines)
+                lnSpec = axSpec.lines(ln);
+                lineInfo = struct();
+                lineInfo.xName       = getFieldOrDefault(lnSpec, 'xExpr', '');
+                lineInfo.yName       = getFieldOrDefault(lnSpec, 'yExpr', '');
+                lineInfo.displayName = getFieldOrDefault(lnSpec, 'displayName', lineInfo.yName);
+                lineInfo.legend      = getFieldOrDefault(lnSpec, 'legend', true);
+                lineInfo.gain        = getFieldOrDefault(lnSpec, 'gain', 1);
+                lineInfo.offset      = getFieldOrDefault(lnSpec, 'offset', 0);
+                lineInfo.sampleDim   = getFieldOrDefault(lnSpec, 'sampleDim', []);
+                lineInfo.seriesIndices = getFieldOrDefault(lnSpec, 'seriesIndices', []);
+                lineInfo.ySize       = getFieldOrDefault(lnSpec, 'ySize', []);
+                styleSpec = struct();
+                if isfield(lnSpec, 'style') && isstruct(lnSpec.style)
+                    styleSpec = lnSpec.style;
+                end
+                lineInfo.lineWidth   = getFieldOrDefault(styleSpec, 'lineWidth', 1.5);
+                lineInfo.lineStyle   = getFieldOrDefault(styleSpec, 'lineStyle', '-');
+                lineInfo.color       = getFieldOrDefault(styleSpec, 'color', [0 0.4470 0.7410]);
+                if isfield(lnSpec, 'snapshot') && isstruct(lnSpec.snapshot)
+                    lineInfo.xData = getFieldOrDefault(lnSpec.snapshot, 'x', []);
+                    lineInfo.yData = getFieldOrDefault(lnSpec.snapshot, 'y', []);
+                end
+                subplotInfo.lines(end+1) = ensureLineDefaults(lineInfo); %#ok<AGROW>
+            end
+        end
     end
 
     function [handles, labels] = plotPreviewLines(axPreview, subplotInfo)
@@ -1991,10 +2055,13 @@ fig.CloseRequestFcn = @onCloseRequested;
         if ~state.autosaveEnabled
             return;
         end
-        periodSec = max(1, state.autosaveIntervalMinutes) * 60;
-        state.autosaveTimer = timer('ExecutionMode', 'fixedSpacing', ...
+%         periodSec = max(1, state.autosaveIntervalMinutes) * 60;
+        periodSec = 3;
+        syncAutosaveIndexFromDisk();
+        state.autosaveTimer = timer('ExecutionMode', 'fixedRate', ...
             'StartDelay', periodSec, ...
             'Period', periodSec, ...
+            'BusyMode', 'drop', ...
             'TimerFcn', @(~, ~) triggerAutosave('timer'));
         try
             start(state.autosaveTimer);
@@ -2027,21 +2094,26 @@ fig.CloseRequestFcn = @onCloseRequested;
             reason = 'timer';
         end
 
+        if state.autosaveInProgress
+            return;
+        end
+        state.autosaveInProgress = true;
+        cleanupAutosave = onCleanup(@() clearAutosaveFlag()); %#ok<NASGU>
+
         if isempty(state.storageDir)
             initializeStoragePreferences();
         end
 
-        autosaveIdx = 1;
-        autosaveFiles = dir(fullfile(state.storageDir, 'autosave_*.plotmenu.mat'));
-        if ~isempty(autosaveFiles)
-            autosaveIdx = mod(numel(autosaveFiles), state.autosaveRotation) + 1;
-        end
+        syncAutosaveIndexFromDisk();
+        autosaveIdx = state.autosaveNextIndex;
 
         try
+            drawnow limitrate;
             pmFig = buildFigureSpec(true, autosaveIdx);
             baseName = sprintf('autosave_%d', autosaveIdx);
             saveFigureToDirectory(pmFig, state.storageDir, baseName);
             trimAutosaveEntries();
+            state.autosaveNextIndex = mod(autosaveIdx, state.autosaveRotation) + 1;
             if strcmp(reason, 'manual')
                 setStatus('Autosave completed.', false);
             end
@@ -2050,6 +2122,35 @@ fig.CloseRequestFcn = @onCloseRequested;
                 setStatus(sprintf('Autosave failed: %s', ME.message), true);
             end
         end
+
+        function clearAutosaveFlag()
+            state.autosaveInProgress = false;
+        end
+    end
+
+    function syncAutosaveIndexFromDisk()
+        if isempty(state.storageDir) || ~exist(state.storageDir, 'dir')
+            state.autosaveNextIndex = 1;
+            return;
+        end
+
+        autosaveFiles = dir(fullfile(state.storageDir, 'autosave_*.plotmenu.mat'));
+        if isempty(autosaveFiles)
+            state.autosaveNextIndex = 1;
+            return;
+        end
+
+        [~, order] = sort([autosaveFiles.datenum]);
+        latest = autosaveFiles(order(end));
+        tokens = regexp(latest.name, 'autosave_(\d+)', 'tokens');
+        lastIdx = 0;
+        if ~isempty(tokens) && ~isempty(tokens{1})
+            lastIdx = str2double(tokens{1}{1});
+            if isnan(lastIdx)
+                lastIdx = 0;
+            end
+        end
+        state.autosaveNextIndex = mod(lastIdx, state.autosaveRotation) + 1;
     end
 
     function trimAutosaveEntries()
@@ -2065,6 +2166,7 @@ fig.CloseRequestFcn = @onCloseRequested;
             safeDeleteFile(matFile);
             safeDeleteFile(pngFile);
         end
+        syncAutosaveIndexFromDisk();
     end
 
     function [success, errMsg] = safeDeleteFile(pathToDelete)
