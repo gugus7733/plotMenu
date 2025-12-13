@@ -5401,16 +5401,34 @@ refreshWorkspaceControls();
                 codeLines{end+1} = sprintf('ylabel(ax, ''%s'');', yStr);
             end
             
-            codeLines{end+1} = sprintf('xlim(ax, %s);', arrayToLiteral(axLocal.XLim));
-            codeLines{end+1} = sprintf('ylim(ax, %s);', arrayToLiteral(axLocal.YLim));
-            
-            codeLines{end+1} = sprintf('set(ax, ''XScale'', ''%s'');', subplotInfo.xScale);
-            codeLines{end+1} = sprintf('set(ax, ''YScale'', ''%s'');', subplotInfo.yScale);
-            if subplotInfo.axisEqual
-                codeLines{end+1} = 'axis(ax,''equal'');';
-            else
-                codeLines{end+1} = 'axis(ax,''normal'');';
-            end
+             % --- Minimal export: only emit non-default / user-touched axes settings ---
+             % Limits: only export if the user forced manual limits (zoom/pan/xlim/ylim),
+             % or if log scale is enabled (requires positive limits).
+             xLimMode = 'auto';
+             yLimMode = 'auto';
+             try, xLimMode = axLocal.XLimMode; catch, end
+             try, yLimMode = axLocal.YLimMode; catch, end
+             
+             if strcmpi(subplotInfo.xScale, 'log') || strcmpi(xLimMode, 'manual')
+                 codeLines{end+1} = sprintf('xlim(ax, %s);', arrayToLiteral(axLocal.XLim));
+             end
+             if strcmpi(subplotInfo.yScale, 'log') || strcmpi(yLimMode, 'manual')
+                 codeLines{end+1} = sprintf('ylim(ax, %s);', arrayToLiteral(axLocal.YLim));
+             end
+             
+             % Scales: default is linear -> only export if not linear
+             if ~strcmpi(subplotInfo.xScale, 'linear')
+                 codeLines{end+1} = sprintf('set(ax, ''XScale'', ''%s'');', subplotInfo.xScale);
+             end
+             if ~strcmpi(subplotInfo.yScale, 'linear')
+                 codeLines{end+1} = sprintf('set(ax, ''YScale'', ''%s'');', subplotInfo.yScale);
+             end
+             
+             % Aspect ratio: default is "normal" -> only export when equal is requested
+             if subplotInfo.axisEqual
+                 codeLines{end+1} = 'axis(ax,''equal'');';
+             end
+
             if ~isempty(subplotInfo.xTickSpacing) && isfinite(subplotInfo.xTickSpacing) && subplotInfo.xTickSpacing > 0
                 codeLines{end+1} = sprintf('set(ax, ''XTick'', %g:%g:%g);', ...
                     axLocal.XLim(1), subplotInfo.xTickSpacing, axLocal.XLim(2));
@@ -5427,8 +5445,6 @@ refreshWorkspaceControls();
                 codeLines{end+1} = sprintf( ...
                     'legend(ax, ''show'', ''Location'', ''%s'');', ...
                     subplotInfo.legendLocation);
-            else
-                codeLines{end+1} = 'legend(ax, ''off'');';
             end
             
             codeLines{end+1} = 'grid(ax,''on'');';
