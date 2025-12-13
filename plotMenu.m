@@ -486,19 +486,22 @@ bottomPanel = uipanel(stylesLayout, 'BorderType', 'none', 'BackgroundColor', the
 bottomPanel.Layout.Row    = 3;
 bottomPanel.Layout.Column = 1;
 
-bottomLayout = uigridlayout(bottomPanel, [2 2]);
-bottomLayout.RowHeight = {30, 30};
-bottomLayout.ColumnWidth = {'1x', 'fit'};
-bottomLayout.RowSpacing = 6;
-bottomLayout.ColumnSpacing = 12;
+% Style & Export footer: compact 2x2 button island above a full-width export
+% row pinned to the bottom via an expanding spacer.
+bottomLayout = uigridlayout(bottomPanel, [3 1]);
+bottomLayout.RowHeight = {'fit', '1x', 'fit'};
+bottomLayout.ColumnWidth = {'1x'};
+bottomLayout.RowSpacing = 10;
+bottomLayout.Padding = [0 0 0 0];
 
 rightPanel.SizeChangedFcn = @(~, ~) updateStylesScrollContainerSize();
 
-footerActionsLayout = uigridlayout(bottomLayout, [2 3]);
-footerActionsLayout.Layout.Row = [1 2];
+% Compact 2x2 island for save/import/preferences actions above the export row
+footerActionsLayout = uigridlayout(bottomLayout, [2 2]);
+footerActionsLayout.Layout.Row = 1;
 footerActionsLayout.Layout.Column = 1;
 footerActionsLayout.RowHeight = {30, 30};
-footerActionsLayout.ColumnWidth = {'1x', '1x', '1x'};
+footerActionsLayout.ColumnWidth = {'1x', '1x'};
 footerActionsLayout.RowSpacing = 6;
 footerActionsLayout.ColumnSpacing = 8;
 footerActionsLayout.Padding = [0 0 0 0];
@@ -522,28 +525,26 @@ btnImportFigure = uibutton(footerActionsLayout, ...
     'Text',          'Import Figure', ...
     'Tooltip',       'Browse saved PlotMenu figures', ...
     'ButtonPushedFcn', @onOpenImportManager);
-btnImportFigure.Layout.Row    = 1;
-btnImportFigure.Layout.Column = 3;
+btnImportFigure.Layout.Row    = 2;
+btnImportFigure.Layout.Column = 1;
 
-btnRefreshFigures = uibutton(footerActionsLayout, ...
-    'Text', 'Refresh', ...
-    'Tooltip', 'Refresh autosave now', ...
-    'ButtonPushedFcn', @(~, ~) triggerAutosave('manual'));
-btnRefreshFigures.Layout.Row    = 2;
-btnRefreshFigures.Layout.Column = 1;
-
+prefIconPath = fullfile(matlabroot, 'toolbox', 'matlab', 'icons', 'tool_preferences.png');
 btnPreferences = uibutton(footerActionsLayout, ...
-    'Text', 'Preferences', ...
-    'Tooltip', 'Preferences', ...
+    'Text',          '', ...
+    'Tooltip',       'Preferences', ...
     'ButtonPushedFcn', @onPreferencesClicked);
+if exist(prefIconPath, 'file')
+    btnPreferences.Icon = prefIconPath;
+    btnPreferences.IconAlignment = 'center';
+end
 btnPreferences.Layout.Row    = 2;
 btnPreferences.Layout.Column = 2;
 
 btnExport = uibutton(bottomLayout, ...
     'Text',          'Export to MATLAB code', ...
     'ButtonPushedFcn', @onExport);
-btnExport.Layout.Row    = 1;
-btnExport.Layout.Column = 2;
+btnExport.Layout.Row    = 3;
+btnExport.Layout.Column = 1;
 % btnExport.Layout.RowSpan = 2;
 
 % Status "toast" label (center bottom of the figure)
@@ -584,7 +585,7 @@ appState.prefDialog     = [];
 appState.prefControls   = struct();
 appState.allButtons = [btnRefresh, btnOtherData, btnIndexVars, btnDerivedNew, btnClear, btnPlot, btnLineOrderDown, btnLineOrderUp, ...
     btnPresetDeg2Rad, btnPresetRad2Deg, tbtnDatatipMode, btnRemoveLine, btnAutoXTicks, btnAutoYTicks, btnExport, btnPreferences, ...
-    btnQuickSave, btnSaveAs, btnImportFigure, btnRefreshFigures];
+    btnQuickSave, btnSaveAs, btnImportFigure];
 appState.allCheckboxes = [chkSubplotSuperpose, chkLineLegend, chkAxisEqual, chkLegend];
 appState.allLabels = [lblLayoutSummary, lblXVar, lblYVar, lblLines, lblLineName, lblLineOrder, lblColor, lblWidth, ...
     lblStyle, lblTransform, lblGain, lblOffset, lblTitle, lblXLabel, lblYLabel, lblLegendLoc, lblAxesScaleHeader, lblXTickSpacing, ...
@@ -1540,12 +1541,148 @@ fig.CloseRequestFcn = @onCloseRequested;
         warnCleanup = onCleanup(@() warning(warnState)); %#ok<NASGU>
         warning('off', 'all'); % Suppress UI component export warnings during preview capture
         try
-            exportgraphics(centerPanel, pngPath, 'Resolution', 144);
+            renderPreviewFromState(pngPath);
         catch
             try
-                exportgraphics(fig, pngPath, 'Resolution', 144);
+                drawnow;
+                exportgraphics(centerPanel, pngPath, 'Resolution', 144);
             catch
-                % If preview fails, keep going silently.
+                try
+                    exportgraphics(fig, pngPath, 'Resolution', 144);
+                catch
+                    % If preview fails, keep going silently.
+                end
+            end
+        end
+    end
+
+    % Build previews directly from the stored subplot/line state so UI container
+    % backgrounds (which render as blank white surfaces in some releases) no
+    % longer leak into the saved PNG previews.
+    function renderPreviewFromState(pngPath)
+        rows = max(1, state.subplotRows);
+        cols = max(1, state.subplotCols);
+        tmpFig = figure('Visible', 'off', 'Color', theme.bgMain, 'Position', [100 100 960 720]);
+        cleanupObj = onCleanup(@() safeCloseFigure(tmpFig)); %#ok<NASGU>
+
+        tl = tiledlayout(tmpFig, rows, cols, 'Padding', 'compact', 'TileSpacing', 'compact');
+        numTiles = max(numel(state.subplots), rows * cols);
+        for idxLocal = 1:numTiles
+            nexttile(tl, idxLocal);
+            axPreview = gca;
+            if idxLocal > numel(state.subplots)
+                axis(axPreview, 'off');
+                continue;
+            end
+
+            subplotInfo = ensureSubplotStruct(state.subplots(idxLocal));
+            applyAxesTheme(axPreview, false);
+            plotPreviewLines(axPreview, subplotInfo);
+            applyPreviewAxesConfig(axPreview, subplotInfo);
+        end
+
+        drawnow;
+        exportgraphics(tmpFig, pngPath, 'Resolution', 144);
+    end
+
+    function [handles, labels] = plotPreviewLines(axPreview, subplotInfo)
+        handles = [];
+        labels = {};
+        hold(axPreview, 'on');
+        for ln = 1:numel(subplotInfo.lines)
+            lnInfo = ensureLineDefaults(subplotInfo.lines(ln));
+            xData = lnInfo.xData;
+            yData = lnInfo.yData;
+
+            if isempty(xData) && isgraphics(lnInfo.handle)
+                xData = safeGetLineData(lnInfo.handle, 'XData');
+            end
+            if isempty(yData) && isgraphics(lnInfo.handle)
+                yData = safeGetLineData(lnInfo.handle, 'YData');
+            end
+
+            if isempty(xData) || isempty(yData)
+                continue;
+            end
+
+            lnColor = lnInfo.color;
+            if isempty(lnColor)
+                lnColor = [0 0.4470 0.7410];
+            end
+            lnWidth = lnInfo.lineWidth;
+            if isempty(lnWidth)
+                lnWidth = 1.5;
+            end
+            lnStyle = lnInfo.lineStyle;
+            if isempty(lnStyle)
+                lnStyle = '-';
+            end
+
+            hLine = plot(axPreview, xData, yData, ...
+                'LineWidth', lnWidth, ...
+                'LineStyle', lnStyle, ...
+                'Color',     lnColor, ...
+                'DisplayName', lnInfo.displayName);
+
+            if lnInfo.legend
+                handles(end+1) = hLine; %#ok<AGROW>
+                labels{end+1} = lnInfo.displayName; %#ok<AGROW>
+            end
+        end
+        hold(axPreview, 'off');
+
+        if subplotInfo.legendVisible && ~isempty(handles)
+            try
+                legend(axPreview, handles, labels, 'Location', subplotInfo.legendLocation);
+            catch
+                legend(axPreview, handles, labels);
+            end
+        else
+            legend(axPreview, 'off');
+        end
+    end
+
+    function applyPreviewAxesConfig(axPreview, subplotInfo)
+        title(axPreview, subplotInfo.titleText);
+        xlabel(axPreview, subplotInfo.xLabelText);
+        ylabel(axPreview, subplotInfo.yLabelText);
+
+        if ~isempty(subplotInfo.xLim)
+            try
+                axPreview.XLim = subplotInfo.xLim;
+            catch
+            end
+        end
+        if ~isempty(subplotInfo.yLim)
+            try
+                axPreview.YLim = subplotInfo.yLim;
+            catch
+            end
+        end
+
+        try
+            axPreview.XScale = subplotInfo.xScale;
+        catch
+        end
+        try
+            axPreview.YScale = subplotInfo.yScale;
+        catch
+        end
+
+        if isfield(subplotInfo, 'axisEqual') && ~isempty(subplotInfo.axisEqual) && subplotInfo.axisEqual
+            try
+                axis(axPreview, 'equal');
+            catch
+            end
+        end
+        grid(axPreview, 'on');
+    end
+
+    function safeCloseFigure(figHandle)
+        if isgraphics(figHandle)
+            try
+                close(figHandle);
+            catch
             end
         end
     end
@@ -1697,7 +1834,7 @@ fig.CloseRequestFcn = @onCloseRequested;
         actionsLayout = uigridlayout(actionsPanel, [1 4]);
         actionsLayout.ColumnWidth = {120, 120, 120, '1x'};
 
-        btnOpenFigure = uibutton(actionsLayout, 'Text', 'Open', 'ButtonPushedFcn', @onImportOpen);
+        btnOpenFigure = uibutton(actionsLayout, 'Text', 'Import', 'ButtonPushedFcn', @onImportOpen);
         btnOpenFigure.Layout.Row = 1;
         btnOpenFigure.Layout.Column = 1;
 
@@ -1716,6 +1853,10 @@ fig.CloseRequestFcn = @onCloseRequested;
         applyButtonStyle([btnOpenFigure, btnDeleteFigure, btnRefreshList, btnClearAll]);
         applyLabelStyle([lblImportMeta, lblImportStatus]);
         applyPanelStyle([previewPanel, actionsPanel]);
+        applyImportDialogTheme(struct('dialog', dlg, 'layout', layout, 'table', tbl, 'previewPanel', previewPanel, ...
+            'previewLayout', previewLayout, 'previewImage', imgPreview, 'actionsPanel', actionsPanel, ...
+            'actionsLayout', actionsLayout, 'labels', [lblImportMeta, lblImportStatus], ...
+            'buttons', [btnOpenFigure, btnDeleteFigure, btnClearAll, btnRefreshList]));
 
         state.importDialog = dlg;
         state.importControls = struct('table', tbl, 'img', imgPreview, 'meta', lblImportMeta, ...
@@ -2237,6 +2378,47 @@ fig.CloseRequestFcn = @onCloseRequested;
                 else
                     btn.FontWeight = 'normal';
                 end
+            end
+        end
+    end
+
+    % Keep the import manager consistently dark-themed alongside the main UI.
+    function applyImportDialogTheme(handlesStruct)
+        dlg = handlesStruct.dialog;
+        tbl = handlesStruct.table;
+        previewPanel = handlesStruct.previewPanel;
+        previewLayout = handlesStruct.previewLayout;
+        previewImage = handlesStruct.previewImage;
+        actionsPanel = handlesStruct.actionsPanel;
+        actionsLayout = handlesStruct.actionsLayout;
+        labels = handlesStruct.labels;
+        buttons = handlesStruct.buttons;
+        layout = handlesStruct.layout;
+
+        if isgraphics(dlg)
+            dlg.Color = theme.bgMain;
+        end
+        applyLayoutBackground([layout, previewLayout, actionsLayout]);
+        applyPanelStyle([previewPanel, actionsPanel], theme.bgPanel);
+        applyButtonStyle(buttons, true, true);
+        applyLabelStyle(labels);
+
+        if isgraphics(previewImage) && isprop(previewImage, 'BackgroundColor')
+            previewImage.BackgroundColor = theme.bgControlAlt;
+        end
+
+        if isgraphics(tbl)
+            if isprop(tbl, 'BackgroundColor')
+                tbl.BackgroundColor = [theme.bgControl; theme.bgControl];
+            end
+            if isprop(tbl, 'FontColor')
+                tbl.FontColor = theme.fgText;
+            end
+            if isprop(tbl, 'FontName')
+                tbl.FontName = currentFont.fontName;
+            end
+            if isprop(tbl, 'FontSize')
+                tbl.FontSize = currentFont.fontSizeBase;
             end
         end
     end
