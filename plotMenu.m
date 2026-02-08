@@ -4042,6 +4042,10 @@ fig.CloseRequestFcn = @onCloseRequested;
         validNames = {state.workspaceMeta([state.workspaceMeta.isValidXCandidate]).name};
         extraNames = discoverAdditionalXCandidates();
         validNames = unique([validNames, extraNames], 'stable');
+        if ~isempty(validNames)
+            [~, sortOrder] = sort(lower(string(validNames)));
+            validNames = validNames(sortOrder);
+        end
         
         if isempty(validNames)
             ddXVar.Items   = {'<no valid arrays>'};
@@ -4355,6 +4359,12 @@ fig.CloseRequestFcn = @onCloseRequested;
             end
             orientedExpr = ensureColumnExpression(item.expression, item.dimSizes, xLen);
             [yItems, yData] = appendYEntry(yItems, yData, item.label, orientedExpr); %#ok<AGROW>
+        end
+
+        if ~isempty(yItems)
+            [~, sortOrder] = sort(lower(string(yItems)));
+            yItems = yItems(sortOrder);
+            yData = yData(sortOrder);
         end
         
         lbYVar.Items     = yItems;
