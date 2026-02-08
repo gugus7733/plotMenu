@@ -7018,6 +7018,8 @@ fig.CloseRequestFcn = @onCloseRequested;
             codeLines{end+1} = sprintf('ax = nexttile(tiled, %d); hold(ax,''on'');', s); %#ok<AGROW>
             
             lineVarNames = cell(1, numel(subplotInfo.lines));
+            legendLineVars = {};
+            legendLabels = {};
             
             for k = 1:numel(subplotInfo.lines)
                 info  = subplotInfo.lines(k);
@@ -7057,12 +7059,25 @@ fig.CloseRequestFcn = @onCloseRequested;
                     col(1), col(2), col(3), dnEsc);
                 
                 codeLines{end+1} = lineCode; %#ok<AGROW>
+                
+                if info.legend
+                    legendLineVars{end+1} = lineVar; %#ok<AGROW>
+                    legendLabels{end+1} = dnEsc; %#ok<AGROW>
+                end
             end
             
             codeLines{end+1} = 'hold(ax,''off'');';
             
-            % Axes title / labels
             axLocal = subplotInfo.axes;
+            yLimMode = 'auto';
+            try, yLimMode = axLocal.YLimMode; catch, end
+            if strcmpi(yLimMode, 'manual')
+                codeLines{end+1} = sprintf('ylim(ax, %s);', arrayToLiteral(axLocal.YLim));
+            else
+                codeLines{end+1} = 'ylim(ax, ''padded'');';
+            end
+            
+            % Axes title / labels
             if ~isempty(axLocal.Title.String)
                 tStr = axLocal.Title.String;
                 tStr = strrep(tStr, '''', '''''');
@@ -7083,15 +7098,10 @@ fig.CloseRequestFcn = @onCloseRequested;
              % Limits: only export if the user forced manual limits (zoom/pan/xlim/ylim),
              % or if log scale is enabled (requires positive limits).
              xLimMode = 'auto';
-             yLimMode = 'auto';
              try, xLimMode = axLocal.XLimMode; catch, end
-             try, yLimMode = axLocal.YLimMode; catch, end
              
              if strcmpi(subplotInfo.xScale, 'log') || strcmpi(xLimMode, 'manual')
                  codeLines{end+1} = sprintf('xlim(ax, %s);', arrayToLiteral(axLocal.XLim));
-             end
-             if strcmpi(subplotInfo.yScale, 'log') || strcmpi(yLimMode, 'manual')
-                 codeLines{end+1} = sprintf('ylim(ax, %s);', arrayToLiteral(axLocal.YLim));
              end
              
              % Scales: default is linear -> only export if not linear
@@ -7116,13 +7126,12 @@ fig.CloseRequestFcn = @onCloseRequested;
                     axLocal.YLim(1), subplotInfo.yTickSpacing, axLocal.YLim(2));
             end
             
-            legendable = arrayfun(@(ln) isvalid(ln.handle) && ...
-                strcmp(get(ln.handle.Annotation.LegendInformation, 'IconDisplayStyle'), 'on'), ...
-                subplotInfo.lines);
-            if subplotInfo.legendVisible && any(legendable)
+            if subplotInfo.legendVisible && ~isempty(legendLineVars)
+                legendHandles = sprintf('[%s]', strjoin(legendLineVars, ' '));
+                legendLabelList = sprintf('{''%s''}', strjoin(legendLabels, ''','''));
                 codeLines{end+1} = sprintf( ...
-                    'legend(ax, ''show'', ''Location'', ''%s'');', ...
-                    subplotInfo.legendLocation);
+                    'legend(ax, %s, %s, ''Location'', ''%s'');', ...
+                    legendHandles, legendLabelList, subplotInfo.legendLocation);
             end
             
             codeLines{end+1} = 'grid(ax,''on'');';
@@ -7166,4 +7175,3 @@ fig.CloseRequestFcn = @onCloseRequested;
         end
     end
 end
-
