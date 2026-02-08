@@ -3846,8 +3846,8 @@ fig.CloseRequestFcn = @onCloseRequested;
             errMsg = sprintf('Cannot evaluate X variable "%s":\n%s', xName, ME.message);
             return;
         end
-        if ~(isnumeric(xVal) || islogical(xVal)) || numel(xVal) < 1
-            errMsg = 'X must be a numeric array with more than one element.';
+        if ~isSupportedXArray(xVal) || numel(xVal) < 1
+            errMsg = 'X must be a numeric, datetime, or duration array with more than one element.';
             return;
         end
         
@@ -4032,6 +4032,8 @@ fig.CloseRequestFcn = @onCloseRequested;
         sanitizeCustomIndexExpressions();
 
         validNames = {state.workspaceMeta([state.workspaceMeta.isValidXCandidate]).name};
+        extraNames = discoverAdditionalXCandidates();
+        validNames = unique([validNames, extraNames], 'stable');
         
         if isempty(validNames)
             ddXVar.Items   = {'<no valid arrays>'};
@@ -4242,6 +4244,10 @@ fig.CloseRequestFcn = @onCloseRequested;
             isdatetime(val) || isduration(val);
     end
 
+    function tf = isSupportedXArray(val)
+        tf = isnumeric(val) || isdatetime(val) || isduration(val);
+    end
+
     function meta = getWorkspaceSnapshot()
         % Gather workspace metadata for arrays and containers
         vars = evalin('base', 'whos');
@@ -4267,7 +4273,7 @@ fig.CloseRequestFcn = @onCloseRequested;
             info.kind             = classifyValueKind(val);
             info.isIntegerScalar  = isscalar(val) && isnumeric(val) && isfinite(val) && val == round(val);
             info.isNumeric        = isnumeric(val);
-            info.isValidXCandidate = info.isNumeric && info.numel > 1;
+            info.isValidXCandidate = isSupportedXArray(val) && info.numel > 1;
             if info.isIntegerScalar
                 info.scalarValue = double(val);
             end
@@ -4631,14 +4637,6 @@ fig.CloseRequestFcn = @onCloseRequested;
             timeLen  = numel(timeVal);
             labelOut = baseLabel;
 
-            try
-                tsName = tsObj.Name;
-                if ~isempty(tsName)
-                    labelOut = sprintf('%s (%s)', baseLabel, char(string(tsName)));
-                end
-            catch
-            end
-
             dimSizes = dataSize;
             if isempty(targetLen)
                 exprOut = sprintf('%s.Data', baseExpr);
@@ -4665,6 +4663,73 @@ fig.CloseRequestFcn = @onCloseRequested;
             catch
                 out = [];
             end
+        end
+    end
+
+    function candidates = discoverAdditionalXCandidates()
+        candidates = {};
+        visited = containers.Map('KeyType', 'char', 'ValueType', 'logical');
+        baseNames = {state.workspaceMeta([state.workspaceMeta.isValidXCandidate]).name};
+        for idxLocal = 1:numel(baseNames)
+            visited(baseNames{idxLocal}) = true;
+        end
+
+        for idxLocal = 1:numel(state.workspaceMeta)
+            baseName = state.workspaceMeta(idxLocal).name;
+            try
+                baseVal = evalin('base', baseName);
+            catch
+                continue;
+            end
+
+            switch classifyValueKind(baseVal)
+                case 'array'
+                    if isnumeric(baseVal) && ismatrix(baseVal) && ~isvector(baseVal) && size(baseVal, 2) >= 1
+                        firstCol = baseVal(:, 1);
+                        if isSupportedXArray(firstCol) && numel(firstCol) > 1
+                            addXCandidate(sprintf('%s(:,1)', baseName));
+                        end
+                    end
+
+                case 'table'
+                    try
+                        colNames = baseVal.Properties.VariableNames;
+                    catch
+                        colNames = {};
+                    end
+                    if ~isempty(colNames)
+                        colName = colNames{1};
+                        try
+                            colVal = baseVal.(colName);
+                        catch
+                            colVal = [];
+                        end
+                        if isSupportedXArray(colVal) && isvector(colVal) && numel(colVal) > 1
+                            addXCandidate(sprintf('%s.%s', baseName, colName));
+                        end
+                    end
+
+                case 'timeseries'
+                    try
+                        timeVal = baseVal.Time;
+                    catch
+                        timeVal = [];
+                    end
+                    if isSupportedXArray(timeVal) && numel(timeVal) > 1
+                        addXCandidate(sprintf('%s.Time', baseName));
+                    end
+            end
+        end
+
+        function addXCandidate(expr)
+            if isempty(expr)
+                return;
+            end
+            if isKey(visited, expr)
+                return;
+            end
+            visited(expr) = true;
+            candidates{end+1} = expr; %#ok<AGROW>
         end
     end
 
@@ -4837,12 +4902,12 @@ fig.CloseRequestFcn = @onCloseRequested;
         if ~isempty(idx)
             meta = state.workspaceMeta(idx);
             ok = meta.isValidXCandidate;
-            msg = 'X must be a numeric array with more than one element.';
+            msg = 'X must be a numeric, datetime, or duration array with more than one element.';
         else
             try
                 xVal = evalin('base', xName);
-                ok = isnumeric(xVal) && numel(xVal) > 1;
-                msg = 'X must be a numeric array with more than one element.';
+                ok = isSupportedXArray(xVal) && numel(xVal) > 1;
+                msg = 'X must be a numeric, datetime, or duration array with more than one element.';
             catch ME
                 msg = sprintf('Could not evaluate X: %s', ME.message);
                 ok = false;
@@ -5507,7 +5572,7 @@ fig.CloseRequestFcn = @onCloseRequested;
                 xName, ME.message), 'Error evaluating X');
             return;
         end
-        if ~(isnumeric(xVal) && numel(xVal) > 1)
+        if ~(isSupportedXArray(xVal) && numel(xVal) > 1)
             uialert(fig, msgX, 'Invalid X variable');
             return;
         end
