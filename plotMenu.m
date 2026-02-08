@@ -3410,6 +3410,10 @@ fig.CloseRequestFcn = @onCloseRequested;
     end
 
     function clearSubplot(idx)
+        clearSubplotLines(idx, true);
+    end
+
+    function clearSubplotLines(idx, resetAxisText)
         if idx < 1 || idx > numel(state.subplots)
             return;
         end
@@ -3417,18 +3421,22 @@ fig.CloseRequestFcn = @onCloseRequested;
         subplotInfo = state.subplots(idx);
         if isfield(subplotInfo, 'axes') && isValidAxesHandle(subplotInfo.axes)
             cla(subplotInfo.axes);
-            title(subplotInfo.axes, '');
-            xlabel(subplotInfo.axes, '');
-            ylabel(subplotInfo.axes, '');
+            if resetAxisText
+                title(subplotInfo.axes, '');
+                xlabel(subplotInfo.axes, '');
+                ylabel(subplotInfo.axes, '');
+            end
         end
         
         subplotInfo.lines = struct('handle',{},'xName',{},'yName',{},'legend',{},'datatips',{}, ...
             'xData',{},'yData',{},'gain',{},'offset',{},'color',{},'lineStyle',{},'lineWidth',{},'displayName',{});
-        subplotInfo.titleText  = '';
-        subplotInfo.xLabelText = '';
-        subplotInfo.yLabelText = '';
-        subplotInfo.xLim       = [];
-        subplotInfo.yLim       = [];
+        if resetAxisText
+            subplotInfo.titleText  = '';
+            subplotInfo.xLabelText = '';
+            subplotInfo.yLabelText = '';
+            subplotInfo.xLim       = [];
+            subplotInfo.yLim       = [];
+        end
         state.subplots(idx) = subplotInfo;
         
         if idx == state.activeSubplot
@@ -5592,8 +5600,9 @@ fig.CloseRequestFcn = @onCloseRequested;
         
         % Clear previous lines only if not superposing
         if ~superpose
-            clearSubplot(subplotIdx);
+            clearSubplotLines(subplotIdx, false);
             subplotInfo = state.subplots(subplotIdx);
+            targetAx    = subplotInfo.axes;
         end
         
         hold(targetAx, 'on');
@@ -5689,6 +5698,7 @@ fig.CloseRequestFcn = @onCloseRequested;
         
         applyLineTransformsForSubplot(subplotIdx);
         applyAxesConfig(subplotIdx);
+        applyAxesTextFromState(subplotIdx);
         
         if ~anyPlotted
             % If nothing new was plotted, keep existing lines when
