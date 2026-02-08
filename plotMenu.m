@@ -2644,11 +2644,83 @@ fig.CloseRequestFcn = @onCloseRequested;
             state.subplots(spIdx) = subplotInfo;
             applyAxesConfig(spIdx);
             applyAxesTextFromState(spIdx);
+            updateLegend(subplotInfo.axes);
         end
 
+        syncLegendStateAfterImport();
         state.activeSubplot = 1;
         setActiveSubplot(1);
         refreshLineListFromSubplot([]);
+    end
+
+    function syncLegendStateAfterImport()
+        for spIdx = 1:numel(state.subplots)
+            subplotInfo = ensureSubplotStruct(state.subplots(spIdx));
+            axHandle = subplotInfo.axes;
+            if ~isValidAxesHandle(axHandle)
+                continue;
+            end
+
+            [lgdHandle, legendLines] = getLegendLinesForAxes(axHandle);
+            hasLegend = ~isempty(lgdHandle) && isvalid(lgdHandle);
+            legendVisible = hasLegend && strcmpi(lgdHandle.Visible, 'on');
+
+            subplotInfo.legendVisible = legendVisible;
+
+            for ln = 1:numel(subplotInfo.lines)
+                lnInfo = ensureLineDefaults(subplotInfo.lines(ln));
+                hLine = lnInfo.handle;
+                inLegend = false;
+                if ~isempty(hLine) && isvalid(hLine) && ~isempty(legendLines)
+                    inLegend = any(arrayfun(@(h) isequal(h, hLine), legendLines));
+                end
+                lnInfo.legend = inLegend;
+                subplotInfo.lines(ln) = lnInfo;
+                if ~isempty(hLine) && isvalid(hLine)
+                    try
+                        set(hLine.Annotation.LegendInformation, 'IconDisplayStyle', ternary(inLegend, 'on', 'off'));
+                    catch
+                    end
+                end
+            end
+
+            state.subplots(spIdx) = subplotInfo;
+            updateLegend(axHandle);
+        end
+    end
+
+    function [lgdHandle, legendLines] = getLegendLinesForAxes(axHandle)
+        lgdHandle = [];
+        legendLines = [];
+        figHandle = ancestor(axHandle, 'figure');
+        if isempty(figHandle) || ~isgraphics(figHandle)
+            return;
+        end
+
+        legends = findobj(figHandle, 'Type', 'legend');
+        if isempty(legends)
+            return;
+        end
+
+        for idxLocal = 1:numel(legends)
+            if isprop(legends(idxLocal), 'Axes') && isequal(legends(idxLocal).Axes, axHandle)
+                lgdHandle = legends(idxLocal);
+                break;
+            end
+        end
+
+        if isempty(lgdHandle) || ~isvalid(lgdHandle)
+            return;
+        end
+
+        try
+            legendLines = lgdHandle.PlotChildren;
+        catch
+            legendLines = [];
+        end
+        if ~isempty(legendLines)
+            legendLines = legendLines(isgraphics(legendLines));
+        end
     end
 
     function [lineInfo, hLine] = renderLineFromSpec(axHandle, lnSpec)
