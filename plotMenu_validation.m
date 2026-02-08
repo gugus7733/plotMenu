@@ -97,6 +97,10 @@ ts_temperature.Name = 'Temperature (C)';
 ts_pressure = timeseries(vec_pressure.', vec_time_slow.');
 ts_pressure.Name = 'Pressure (hPa)';
 
+ts_struct = struct();
+ts_struct.ts_temperature = ts_temperature;
+ts_struct.ts_pressure = ts_pressure;
+
 %% Section 9: Launch PlotMenu
 % Opens GUI with all variables available for selection and manual exploration.
 plotMenu();
